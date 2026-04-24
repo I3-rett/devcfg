@@ -191,4 +191,4 @@ curl -L https://github.com/I3-rett/devcfg/releases/latest/download/devcfg-darwin
 - **Structured workflow** — not just a package installer
 - **Keyboard-first UX** — inspired by `tssh` style
 - **Deterministic + minimal** — explicit steps, clear feedback
-- **Extensible via registry** — add tools by editing `tools.json`, no rebuild needed
+- **Extensible via registry** — the bundled tool registry is defined in `tools.json`; changes require rebuilding the binary

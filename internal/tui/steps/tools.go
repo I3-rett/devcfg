@@ -129,7 +129,7 @@ func (m *ToolsModel) startInstallation() tea.Cmd {
 			return installResultMsg{name: t.Name, output: res.Output, err: res.Err}
 		}
 	}
-	return tea.Batch(cmds...)
+	return tea.Sequence(cmds...)
 }
 
 func (m *ToolsModel) View() string {

@@ -155,8 +155,12 @@ func (m *ShellModel) applyShellSetup() tea.Cmd {
 			home, _ := os.UserHomeDir()
 			rcPath := filepath.Join(home, rcFile)
 
-			// Check if already added
-			existing, _ := os.ReadFile(rcPath) //nolint:gosec
+			// Check if already added (ignore not-exist errors; treat other errors as empty)
+			existing, readErr := os.ReadFile(rcPath) //nolint:gosec
+			if readErr != nil && !os.IsNotExist(readErr) {
+				errs = append(errs, "read rc: "+readErr.Error())
+				return shellApplyDoneMsg{err: fmt.Errorf("%s", strings.Join(errs, "; "))}
+			}
 			if !strings.Contains(string(existing), "# devcfg aliases") {
 				f, err := os.OpenFile(rcPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec
 				if err != nil {

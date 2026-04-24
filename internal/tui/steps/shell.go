@@ -152,7 +152,11 @@ func (m *ShellModel) applyShellSetup() tea.Cmd {
 		// Add aliases
 		if addAliases {
 			rcFile := rcFileFor(current, selected)
-			home, _ := os.UserHomeDir()
+			home, err := os.UserHomeDir()
+			if err != nil {
+				errs = append(errs, "resolve home dir: "+err.Error())
+				return shellApplyDoneMsg{err: fmt.Errorf("%s", strings.Join(errs, "; "))}
+			}
 			rcPath := filepath.Join(home, rcFile)
 
 			// Check if already added (ignore not-exist errors; treat other errors as empty)

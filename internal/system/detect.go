@@ -59,6 +59,9 @@ func detectLinuxDistroFromFile(path string) string {
 			return "linux"
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return "linux"
+	}
 	return "linux"
 }
 

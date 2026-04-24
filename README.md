@@ -170,7 +170,7 @@ Tests in this project follow standard Go conventions and are co-located with the
 
 - **Table-driven tests** — use `[]struct{ name, input, want }` slices and iterate with `t.Run(tc.name, ...)` to keep cases readable and easy to extend.
 - **No external test framework** — only the standard `testing` package. Helpers from `testing/iotest` or `os/exec` stubs where relevant.
-- **Isolation** — unit tests must not make real network calls or write to the filesystem. Use `t.TempDir()` for temporary files and restore env variables with `t.Setenv()`.
+- **Isolation** — unit tests must not make real network calls or perform persistent filesystem mutations. Use `t.TempDir()` for temporary files, keep filesystem writes confined there, and restore env variables with `t.Setenv()`.
 - **One assertion per sub-test** — keep each `t.Run` focused; avoid asserting unrelated things together.
 - **Error paths covered** — every function that returns an `error` must have at least one test case that triggers the error branch.
 - **Deterministic** — tests must not rely on timing, random values, or test-execution order.

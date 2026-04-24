@@ -14,6 +14,9 @@ func TestList_ReturnsAllTools(t *testing.T) {
 func TestList_ReturnsCopy(t *testing.T) {
 	a := List()
 	b := List()
+	if len(a) == 0 || len(b) == 0 {
+		t.Fatal("List() returned empty slice; cannot test copy semantics")
+	}
 	a[0].Name = "mutated"
 	if b[0].Name == "mutated" {
 		t.Error("List() returned a shared slice; mutations must not affect subsequent calls")

@@ -1,0 +1,8 @@
+# Generated coverage files
+coverage.out
+coverage.html
+
+# Built binaries
+devcfg
+devcfg-linux-*
+devcfg-darwin-*

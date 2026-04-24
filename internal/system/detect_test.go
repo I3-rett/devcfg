@@ -22,7 +22,7 @@ func TestDetectLinuxDistro_Ubuntu(t *testing.T) {
 	path := writeOSRelease(t, "ID=ubuntu\nNAME=\"Ubuntu\"\n")
 	got := detectLinuxDistroFromFile(path)
 	if got != "ubuntu" {
-		t.Errorf("detectLinuxDistro = %q; want %q", got, "ubuntu")
+		t.Errorf("detectLinuxDistroFromFile = %q; want %q", got, "ubuntu")
 	}
 }
 
@@ -30,7 +30,7 @@ func TestDetectLinuxDistro_Debian(t *testing.T) {
 	path := writeOSRelease(t, "ID=debian\nNAME=\"Debian GNU/Linux\"\n")
 	got := detectLinuxDistroFromFile(path)
 	if got != "debian" {
-		t.Errorf("detectLinuxDistro = %q; want %q", got, "debian")
+		t.Errorf("detectLinuxDistroFromFile = %q; want %q", got, "debian")
 	}
 }
 
@@ -38,7 +38,7 @@ func TestDetectLinuxDistro_UnknownDistro(t *testing.T) {
 	path := writeOSRelease(t, "ID=arch\nNAME=\"Arch Linux\"\n")
 	got := detectLinuxDistroFromFile(path)
 	if got != "linux" {
-		t.Errorf("detectLinuxDistro = %q; want %q", got, "linux")
+		t.Errorf("detectLinuxDistroFromFile = %q; want %q", got, "linux")
 	}
 }
 
@@ -46,14 +46,14 @@ func TestDetectLinuxDistro_QuotedID(t *testing.T) {
 	path := writeOSRelease(t, `ID="ubuntu"` + "\n")
 	got := detectLinuxDistroFromFile(path)
 	if got != "ubuntu" {
-		t.Errorf("detectLinuxDistro (quoted ID) = %q; want %q", got, "ubuntu")
+		t.Errorf("detectLinuxDistroFromFile (quoted ID) = %q; want %q", got, "ubuntu")
 	}
 }
 
 func TestDetectLinuxDistro_MissingFile(t *testing.T) {
 	got := detectLinuxDistroFromFile("/nonexistent/path/os-release")
 	if got != "linux" {
-		t.Errorf("detectLinuxDistro (missing file) = %q; want %q", got, "linux")
+		t.Errorf("detectLinuxDistroFromFile (missing file) = %q; want %q", got, "linux")
 	}
 }
 
@@ -61,7 +61,7 @@ func TestDetectLinuxDistro_EmptyFile(t *testing.T) {
 	path := writeOSRelease(t, "")
 	got := detectLinuxDistroFromFile(path)
 	if got != "linux" {
-		t.Errorf("detectLinuxDistro (empty file) = %q; want %q", got, "linux")
+		t.Errorf("detectLinuxDistroFromFile (empty file) = %q; want %q", got, "linux")
 	}
 }
 

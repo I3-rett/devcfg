@@ -37,8 +37,8 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" \
-            -o devcfg-${{ matrix.suffix }} ./...
+          go build -ldflags="-s -w" \
+            -o devcfg-${{ matrix.suffix }} .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

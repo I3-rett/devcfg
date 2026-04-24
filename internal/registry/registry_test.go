@@ -91,7 +91,7 @@ func TestBinaryName(t *testing.T) {
 }
 
 func TestList_ContainsExpectedTools(t *testing.T) {
-	expected := []string{"git", "neovim", "docker", "nodejs", "python3", "curl", "tmux", "htop", "ripgrep", "fzf", "zsh", "starship"}
+	expected := []string{"brew", "git", "neovim", "docker", "lazydocker", "nodejs", "python3", "curl", "tmux", "htop", "ripgrep", "fzf", "zsh", "starship"}
 	index := make(map[string]bool, len(List()))
 	for _, tool := range List() {
 		index[tool.Name] = true
@@ -100,5 +100,33 @@ func TestList_ContainsExpectedTools(t *testing.T) {
 		if !index[name] {
 			t.Errorf("expected tool %q not found in registry", name)
 		}
+	}
+}
+
+func TestFind_RequiresField(t *testing.T) {
+	tests := []struct {
+		toolName string
+		requires []string
+	}{
+		{"lazydocker", []string{"brew"}},
+		{"git", nil},
+		{"brew", nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.toolName, func(t *testing.T) {
+			tool := Find(tc.toolName)
+			if tool == nil {
+				t.Fatalf("Find(%q) = nil; want non-nil", tc.toolName)
+			}
+			if len(tool.Requires) != len(tc.requires) {
+				t.Errorf("Find(%q).Requires = %v; want %v", tc.toolName, tool.Requires, tc.requires)
+				return
+			}
+			for i, req := range tc.requires {
+				if tool.Requires[i] != req {
+					t.Errorf("Find(%q).Requires[%d] = %q; want %q", tc.toolName, i, tool.Requires[i], req)
+				}
+			}
+		})
 	}
 }

@@ -694,3 +694,156 @@ func TestView_ShowsPendingRemovalBadge(t *testing.T) {
 	}
 }
 
+func TestIsAvailable_UnavailableWhenDepPendingUninstall(t *testing.T) {
+	// brew is installed, lazydocker is installed; confirm removal of brew.
+	// lazydocker should now be unavailable because its required tool is pending uninstall.
+	m := newLoadedModelWithVersions("brew", "lazydocker")
+
+	brewDP, lazyDP := -1, -1
+	for dp, item := range m.displayOrder {
+		switch m.tools[item.idx].Name {
+		case "brew":
+			brewDP = dp
+		case "lazydocker":
+			lazyDP = dp
+		}
+	}
+	if brewDP < 0 || lazyDP < 0 {
+		t.Skip("brew or lazydocker not in registry")
+	}
+
+	// Before removal: lazydocker should be available.
+	if !m.isAvailable(lazyDP) {
+		t.Fatal("lazydocker should be available before any removal")
+	}
+
+	// Mark brew for uninstall without the full applyConfirmedRemoval cascade.
+	brewIdx := m.displayOrder[brewDP].idx
+	m.toUninstall[brewIdx] = true
+	m.checked[brewIdx] = false
+
+	// Now lazydocker must be unavailable.
+	if m.isAvailable(lazyDP) {
+		t.Error("lazydocker should be unavailable when its dep (brew) is pending uninstall")
+	}
+}
+
+func TestIsAvailable_PreventsRecheckAfterDepRemoval(t *testing.T) {
+	// Confirm removal of brew, then lazydocker must not be selectable.
+	m := newLoadedModelWithVersions("brew", "lazydocker")
+
+	brewDP, lazyDP := -1, -1
+	for dp, item := range m.displayOrder {
+		switch m.tools[item.idx].Name {
+		case "brew":
+			brewDP = dp
+		case "lazydocker":
+			lazyDP = dp
+		}
+	}
+	if brewDP < 0 || lazyDP < 0 {
+		t.Skip("brew or lazydocker not in registry")
+	}
+
+	m.applyConfirmedRemoval(brewDP)
+
+	if m.isAvailable(lazyDP) {
+		t.Error("lazydocker should not be available after brew is confirmed for removal")
+	}
+}
+
+func TestToggleOrConfirm_SeparatesInstalledAndDeselectedDeps(t *testing.T) {
+	// brew is installed, lazydocker is installed, another tool that requires brew but is
+	// only selected (not installed yet) would go to deselectedDeps.
+	// For registry tools: brew=installed, lazydocker=installed.
+	// popupDeps should contain "lazydocker" (installed), popupDeselectedDeps should be empty.
+	m := newLoadedModelWithVersions("brew", "lazydocker")
+
+	brewDP := -1
+	for dp, item := range m.displayOrder {
+		if m.tools[item.idx].Name == "brew" {
+			brewDP = dp
+			break
+		}
+	}
+	if brewDP < 0 {
+		t.Skip("brew not in registry")
+	}
+
+	m.toggleOrConfirm(brewDP)
+	if !m.popupMode {
+		t.Fatal("popupMode should be open")
+	}
+
+	// lazydocker is installed → must be in popupDeps (will be uninstalled)
+	foundInstalled := false
+	for _, d := range m.popupDeps {
+		if d == "lazydocker" {
+			foundInstalled = true
+			break
+		}
+	}
+	if !foundInstalled {
+		t.Errorf("popupDeps = %v; want to contain lazydocker (installed)", m.popupDeps)
+	}
+
+	// lazydocker must NOT appear in popupDeselectedDeps
+	for _, d := range m.popupDeselectedDeps {
+		if d == "lazydocker" {
+			t.Errorf("popupDeselectedDeps = %v; should not contain lazydocker (it is installed)", m.popupDeselectedDeps)
+		}
+	}
+}
+
+func TestToggleOrConfirm_SelectedOnlyDepGoesToDeselectedList(t *testing.T) {
+	// brew installed, lazydocker only selected (version == "").
+	// popupDeps should be empty, popupDeselectedDeps should contain lazydocker.
+	m := newLoadedModelWithVersions("brew") // only brew is installed
+
+	// Manually check lazydocker (it becomes available once brew is installed/checked).
+	lazyDP := -1
+	brewDP := -1
+	for dp, item := range m.displayOrder {
+		switch m.tools[item.idx].Name {
+		case "lazydocker":
+			lazyDP = dp
+		case "brew":
+			brewDP = dp
+		}
+	}
+	if lazyDP < 0 || brewDP < 0 {
+		t.Skip("brew or lazydocker not in registry")
+	}
+
+	// lazydocker should now be available (brew installed) and unchecked; check it.
+	if !m.isAvailable(lazyDP) {
+		t.Fatal("lazydocker should be available once brew is installed")
+	}
+	m.setChecked(lazyDP, true)
+
+	// Open popup for brew removal.
+	m.toggleOrConfirm(brewDP)
+	if !m.popupMode {
+		t.Fatal("popupMode should be open")
+	}
+
+	// lazydocker is not installed → must be in popupDeselectedDeps
+	foundDeselected := false
+	for _, d := range m.popupDeselectedDeps {
+		if d == "lazydocker" {
+			foundDeselected = true
+			break
+		}
+	}
+	if !foundDeselected {
+		t.Errorf("popupDeselectedDeps = %v; want to contain lazydocker (selected but not installed)", m.popupDeselectedDeps)
+	}
+
+	// lazydocker must NOT appear in popupDeps
+	for _, d := range m.popupDeps {
+		if d == "lazydocker" {
+			t.Errorf("popupDeps = %v; should not contain lazydocker (it is not installed)", m.popupDeps)
+		}
+	}
+}
+

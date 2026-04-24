@@ -146,10 +146,11 @@ type ToolsModel struct {
 	msgLines     []string
 
 	// confirmation popup state
-	popupMode   bool     // removal confirmation popup is currently shown
-	popupToolDP int      // display position of the tool awaiting confirmation
-	popupDeps   []string // names of currently-checked tools that transitively depend on popupToolDP
-	popupCursor int      // 0 = "Yes, Remove"; 1 = "Cancel"
+	popupMode          bool     // removal confirmation popup is currently shown
+	popupToolDP        int      // display position of the tool awaiting confirmation
+	popupDeps          []string // names of INSTALLED checked tools that will also be uninstalled
+	popupDeselectedDeps []string // names of checked-but-not-installed tools that will be deselected
+	popupCursor        int      // 0 = "Yes, Remove"; 1 = "Cancel"
 }
 
 // NewToolsModel initialises the model with the full tool registry.
@@ -185,7 +186,8 @@ func (m *ToolsModel) Init() tea.Cmd {
 }
 
 // isAvailable returns true when all tools listed in Requires for the item at
-// displayPos are either already installed (version detected) or checked.
+// displayPos are either already installed (version detected) or checked, AND
+// none of those required tools are pending uninstallation.
 func (m *ToolsModel) isAvailable(displayPos int) bool {
 	tool := m.tools[m.displayOrder[displayPos].idx]
 	for _, req := range tool.Requires {
@@ -193,7 +195,7 @@ func (m *ToolsModel) isAvailable(displayPos int) bool {
 		if !ok {
 			continue
 		}
-		if m.versions[reqIdx] == "" && !m.checked[reqIdx] {
+		if m.toUninstall[reqIdx] || (m.versions[reqIdx] == "" && !m.checked[reqIdx]) {
 			return false
 		}
 	}
@@ -288,17 +290,7 @@ func (m *ToolsModel) applyConfirmedRemoval(dp int) {
 // hasRemovalPendingDep returns true when any requirement of the tool at
 // displayPos is either being removed (toUninstall) or no longer available.
 func (m *ToolsModel) hasRemovalPendingDep(displayPos int) bool {
-	tool := m.tools[m.displayOrder[displayPos].idx]
-	for _, req := range tool.Requires {
-		reqIdx, ok := m.nameToIdx[req]
-		if !ok {
-			continue
-		}
-		if m.toUninstall[reqIdx] || (m.versions[reqIdx] == "" && !m.checked[reqIdx]) {
-			return true
-		}
-	}
-	return false
+	return !m.isAvailable(displayPos)
 }
 
 func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -409,8 +401,18 @@ func (m *ToolsModel) toggleOrConfirm(displayPos int) {
 	idx := m.displayOrder[displayPos].idx
 	if m.checked[idx] && m.versions[idx] != "" {
 		// Tool is installed — ask before removing.
+		// Split dependents into installed (will be uninstalled) vs. selected-only (will be deselected).
+		var installedDeps, deselectedDeps []string
+		for _, name := range m.checkedDependentsOf(idx) {
+			if depIdx, ok := m.nameToIdx[name]; ok && m.versions[depIdx] != "" {
+				installedDeps = append(installedDeps, name)
+			} else {
+				deselectedDeps = append(deselectedDeps, name)
+			}
+		}
 		m.popupToolDP = displayPos
-		m.popupDeps = m.checkedDependentsOf(idx)
+		m.popupDeps = installedDeps
+		m.popupDeselectedDeps = deselectedDeps
 		m.popupCursor = 0
 		m.popupMode = true
 	} else {
@@ -584,9 +586,16 @@ func (m *ToolsModel) viewPopup() string {
 
 	if len(m.popupDeps) > 0 {
 		inner.WriteString("\n" + tuistyles.StatusStyle.Render(
-			"The following tools also require "+tool.Name+" and will be removed:") + "\n")
+			"The following tools also require "+tool.Name+" and will be uninstalled:") + "\n")
 		for _, dep := range m.popupDeps {
 			inner.WriteString(tuistyles.WarningStyle.Render("  • "+dep) + "\n")
+		}
+	}
+	if len(m.popupDeselectedDeps) > 0 {
+		inner.WriteString("\n" + tuistyles.StatusStyle.Render(
+			"The following selected tools also require "+tool.Name+" and will be deselected:") + "\n")
+		for _, dep := range m.popupDeselectedDeps {
+			inner.WriteString(tuistyles.StatusStyle.Render("  • "+dep) + "\n")
 		}
 	}
 

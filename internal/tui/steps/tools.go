@@ -351,194 +351,211 @@ func (m *ToolsModel) hasRemovalPendingDep(displayPos int) bool {
 }
 
 // Update handles messages for the tools installation step.
-func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:gocyclo
-	// Handle popup confirmation before anything else.
+func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.popupMode {
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			switch keyMsg.String() {
-			case "left", "h":
-				m.popupCursor = 0
-			case "right", "l":
-				m.popupCursor = 1
-			case " ", "enter":
-				if m.popupCursor == 0 {
-					m.applyConfirmedRemoval(m.popupToolDP)
-				}
-				m.popupMode = false
-			case "esc":
-				m.popupMode = false
-			}
-		}
-		return m, nil
+		return m.updatePopupMsg(msg)
 	}
-
 	if m.running {
-		// Abort confirmation overlay: handle keys before anything else.
-		if m.abortMode {
-			if keyMsg, ok := msg.(tea.KeyMsg); ok {
-				switch keyMsg.String() {
-				case "left", "h":
-					m.abortCursor = 0
-				case "right", "l":
-					m.abortCursor = 1
-				case " ", "enter":
-					if m.abortCursor == 0 {
-						// User confirmed abort: cancel the running command.
-						if m.cancelFn != nil {
-							m.cancelFn()
-						}
-						m.running = false
-						m.done = true
-						m.errors = append(m.errors, "⚠ Installation aborted by user")
-					}
-					m.abortMode = false
-				case "esc":
-					m.abortMode = false
-				}
-			}
-			return m, nil
+		return m.updateRunningMsg(msg)
+	}
+	return m.updateSelectionMsg(msg)
+}
+
+// updatePopupMsg handles messages while the removal confirmation popup is open.
+func (m *ToolsModel) updatePopupMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch keyMsg.String() {
+	case "left", "h":
+		m.popupCursor = 0
+	case "right", "l":
+		m.popupCursor = 1
+	case " ", "enter":
+		if m.popupCursor == 0 {
+			m.applyConfirmedRemoval(m.popupToolDP)
 		}
+		m.popupMode = false
+	case "esc":
+		m.popupMode = false
+	}
+	return m, nil
+}
 
-		switch msg := msg.(type) {
-		case tea.WindowSizeMsg:
-			m.width = msg.Width
-			m.height = msg.Height
-			return m, nil
-
-		case tea.MouseMsg:
-			if msg.Action == tea.MouseActionPress {
-				logs := m.toolLogs[m.currentTool]
-				visibleLines := m.height - 10
-				if visibleLines < 5 {
-					visibleLines = 5
-				}
-				maxOffset := len(logs) - visibleLines
-				if maxOffset < 0 {
-					maxOffset = 0
-				}
-				switch msg.Button {
-				case tea.MouseButtonWheelUp:
-					if m.logScrollOffset < maxOffset {
-						m.logScrollOffset++
-					}
-				case tea.MouseButtonWheelDown:
-					if m.logScrollOffset > 0 {
-						m.logScrollOffset--
-					}
-				}
-			}
-			return m, nil
-
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "ctrl+c", "q":
-				// Show abort confirmation instead of quitting immediately.
-				m.abortMode = true
-				m.abortCursor = 1 // default to "Continue" (safer)
-			}
-			return m, nil
-
-		case logLineMsg:
-			logs := append(m.toolLogs[msg.toolName], msg.line)
-			if len(logs) > logMaxLines {
-				logs = logs[len(logs)-logMaxLines:]
-			}
-			m.toolLogs[msg.toolName] = logs
-			// Re-issue the read command using the channel embedded in the message
-			// to avoid any stale-reference problem across sequential operations.
-			return m, waitForLog(msg.toolName, msg.ch)
-
-		case logDoneMsg:
-			// Log channel closed; the installResultMsg will arrive shortly via
-			// the separate error channel.  Nothing to do here.
-			return m, nil
-
-		case installResultMsg:
-			if m.cancelFn != nil {
-				m.cancelFn() // release context resources on normal completion
-			}
-			if msg.err != nil {
-				m.errors = append(m.errors, fmt.Sprintf("✗ %s: %s", msg.name, msg.err.Error()))
-				m.opSuccess[m.opIdx] = false
-			} else {
-				m.results = append(m.results, fmt.Sprintf("✓ %s installed", msg.name))
-				m.opSuccess[m.opIdx] = true
-			}
-			m.opIdx++
-			return m, m.startNextOp()
-
-		case uninstallResultMsg:
-			if m.cancelFn != nil {
-				m.cancelFn() // release context resources on normal completion
-			}
-			if msg.err != nil {
-				m.errors = append(m.errors, fmt.Sprintf("✗ %s: %s", msg.name, msg.err.Error()))
-				m.opSuccess[m.opIdx] = false
-			} else {
-				m.results = append(m.results, fmt.Sprintf("✓ %s removed", msg.name))
-				m.opSuccess[m.opIdx] = true
-			}
-			m.opIdx++
-			return m, m.startNextOp()
+// updateRunningMsg handles all messages received while an operation is in progress.
+func (m *ToolsModel) updateRunningMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.abortMode {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			m.updateAbortKey(keyMsg.String())
 		}
 		return m, nil
 	}
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+	case tea.MouseMsg:
+		m.updateScrollOffset(msg)
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "q":
+			m.abortMode = true
+			m.abortCursor = 1 // default to "Continue" (safer)
+		}
+	case logLineMsg:
+		return m, m.handleLogLine(msg)
+	case installResultMsg:
+		return m, m.handleOpResult(msg.name, msg.err, true)
+	case uninstallResultMsg:
+		return m, m.handleOpResult(msg.name, msg.err, false)
+	}
+	return m, nil
+}
 
+// updateAbortKey processes a key press on the abort confirmation overlay.
+func (m *ToolsModel) updateAbortKey(key string) {
+	switch key {
+	case "left", "h":
+		m.abortCursor = 0
+	case "right", "l":
+		m.abortCursor = 1
+	case " ", "enter":
+		if m.abortCursor == 0 {
+			if m.cancelFn != nil {
+				m.cancelFn()
+			}
+			m.running = false
+			m.done = true
+			m.errors = append(m.errors, "⚠ Installation aborted by user")
+		}
+		m.abortMode = false
+	case "esc":
+		m.abortMode = false
+	}
+}
+
+// updateScrollOffset adjusts the log scroll position in response to mouse wheel events.
+func (m *ToolsModel) updateScrollOffset(msg tea.MouseMsg) {
+	if msg.Action != tea.MouseActionPress {
+		return
+	}
+	logs := m.toolLogs[m.currentTool]
+	visibleLines := m.height - 10
+	if visibleLines < 5 {
+		visibleLines = 5
+	}
+	maxOffset := len(logs) - visibleLines
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		if m.logScrollOffset < maxOffset {
+			m.logScrollOffset++
+		}
+	case tea.MouseButtonWheelDown:
+		if m.logScrollOffset > 0 {
+			m.logScrollOffset--
+		}
+	}
+}
+
+// handleLogLine appends one log line (capped at logMaxLines) and re-subscribes to the channel.
+func (m *ToolsModel) handleLogLine(msg logLineMsg) tea.Cmd {
+	logs := append(m.toolLogs[msg.toolName], msg.line)
+	if len(logs) > logMaxLines {
+		logs = logs[len(logs)-logMaxLines:]
+	}
+	m.toolLogs[msg.toolName] = logs
+	return waitForLog(msg.toolName, msg.ch)
+}
+
+// handleOpResult records a completed install or uninstall result and starts the next operation.
+func (m *ToolsModel) handleOpResult(name string, err error, isInstall bool) tea.Cmd {
+	if m.cancelFn != nil {
+		m.cancelFn() // release context resources on normal completion
+	}
+	if err != nil {
+		m.errors = append(m.errors, fmt.Sprintf("✗ %s: %s", name, err.Error()))
+		m.opSuccess[m.opIdx] = false
+	} else {
+		verb := "installed"
+		if !isInstall {
+			verb = "removed"
+		}
+		m.results = append(m.results, fmt.Sprintf("✓ %s %s", name, verb))
+		m.opSuccess[m.opIdx] = true
+	}
+	m.opIdx++
+	return m.startNextOp()
+}
+
+// updateSelectionMsg handles messages while the tool selection list is displayed.
+func (m *ToolsModel) updateSelectionMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
-
 	case toolDetectMsg:
-		n := len(m.tools)
-		if len(msg.versions) < n {
-			n = len(msg.versions)
-		}
-		for i := 0; i < n; i++ {
-			m.versions[i] = msg.versions[i]
-			if msg.versions[i] != "" {
-				m.checked[i] = true
-			}
-		}
-		// Uncheck tools whose dependencies are not yet installed/selected.
-		m.cascadeUncheck()
-		m.loaded = true
+		m.applyToolDetect(msg)
 		return m, nil
 	}
-
 	if !m.loaded {
 		return m, nil
 	}
-
-	continueIdx := len(m.displayOrder)
-
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < continueIdx {
-				m.cursor++
-			}
-		case " ":
-			if m.cursor < continueIdx && m.isAvailable(m.cursor) {
-				m.toggleOrConfirm(m.cursor)
-			}
-		case "enter":
-			if m.cursor < continueIdx {
-				if m.isAvailable(m.cursor) {
-					m.toggleOrConfirm(m.cursor)
-				}
-			} else {
-				return m, m.startInstallation()
-			}
-		}
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		return m, m.updateSelectionKey(keyMsg.String())
 	}
 	return m, nil
+}
+
+// applyToolDetect stores detected versions, pre-checks installed tools, and
+// propagates dependency constraints.
+func (m *ToolsModel) applyToolDetect(msg toolDetectMsg) {
+	n := len(m.tools)
+	if len(msg.versions) < n {
+		n = len(msg.versions)
+	}
+	for i := 0; i < n; i++ {
+		m.versions[i] = msg.versions[i]
+		if msg.versions[i] != "" {
+			m.checked[i] = true
+		}
+	}
+	m.cascadeUncheck()
+	m.loaded = true
+}
+
+// updateSelectionKey handles keyboard navigation and selection in the tool list.
+func (m *ToolsModel) updateSelectionKey(key string) tea.Cmd {
+	continueIdx := len(m.displayOrder)
+	switch key {
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "down", "j":
+		if m.cursor < continueIdx {
+			m.cursor++
+		}
+	case " ":
+		if m.cursor < continueIdx {
+			if m.isAvailable(m.cursor) {
+				m.toggleOrConfirm(m.cursor)
+			}
+		}
+	case "enter":
+		if m.cursor < continueIdx {
+			if m.isAvailable(m.cursor) {
+				m.toggleOrConfirm(m.cursor)
+			}
+		} else {
+			return m.startInstallation()
+		}
+	}
+	return nil
 }
 
 // toggleOrConfirm either directly toggles the checked state of the tool at
@@ -676,221 +693,228 @@ func waitForDone(toolName string, errCh chan error, isUninstall bool) tea.Cmd {
 }
 
 // View renders the tools installation step.
-func (m *ToolsModel) View() string { //nolint:gocyclo
-	var sb strings.Builder
-
+func (m *ToolsModel) View() string {
 	if m.popupMode {
 		return m.viewPopup()
 	}
-
 	if m.running {
 		return m.viewRunning()
 	}
-
 	if m.done {
-		sb.WriteString(tuistyles.SuccessStyle.Render("Done!") + "\n\n")
-		for _, r := range m.results {
-			sb.WriteString(tuistyles.SuccessStyle.Render(r) + "\n")
-		}
-		for _, e := range m.errors {
-			sb.WriteString(tuistyles.ErrorStyle.Render(e) + "\n")
-		}
-		return sb.String()
+		return m.viewDone()
 	}
-
 	if !m.loaded {
-		sb.WriteString(tuistyles.StatusStyle.Render("Detecting installed tools...") + "\n")
-		return sb.String()
+		return tuistyles.StatusStyle.Render("Detecting installed tools...") + "\n"
 	}
+	return m.viewSelection()
+}
 
-	sb.WriteString(tuistyles.StatusStyle.Render("Select tools to install/remove (SPACE/ENTER to toggle):") + "\n\n")
-
-	for dp, item := range m.displayOrder {
-		tool := m.tools[item.idx]
-		available := m.isAvailable(dp)
-		checked := m.checked[item.idx]
-		pendingRemoval := m.toUninstall[item.idx]
-
-		cursorStr := "  "
-		if m.cursor == dp {
-			cursorStr = tuistyles.SelectedItemStyle.Render("▶ ")
-		}
-
-		var checkbox string
-		switch {
-		case pendingRemoval:
-			checkbox = tuistyles.ErrorStyle.Render("[✗]")
-		case checked:
-			checkbox = tuistyles.CheckedItemStyle.Render("[✓]")
-		default:
-			checkbox = "[ ]"
-		}
-
-		prefix := treePrefix(item)
-		nameDesc := fmt.Sprintf("%-12s %s", tool.Name, tool.Description)
-
-		var rowContent string
-		if !available {
-			hint := " [requires: " + strings.Join(tool.Requires, ", ") + "]"
-			rowContent = tuistyles.DisabledItemStyle.Render(prefix + "[  ]" + " " + nameDesc + hint)
-		} else {
-			renderName := tuistyles.ItemStyle.Render
-			if m.cursor == dp {
-				renderName = tuistyles.SelectedItemStyle.Render
-			} else if pendingRemoval {
-				renderName = tuistyles.ErrorStyle.Render
-			} else if checked {
-				renderName = tuistyles.CheckedItemStyle.Render
-			}
-
-			versionStr := ""
-			if m.versions[item.idx] != "" {
-				versionStr = "  " + tuistyles.StatusStyle.Render(m.versions[item.idx])
-			}
-
-			rowContent = prefix + checkbox + " " + renderName(nameDesc) + versionStr
-		}
-
-		sb.WriteString(cursorStr + rowContent + "\n")
+// viewDone renders the summary screen shown after all operations complete.
+func (m *ToolsModel) viewDone() string {
+	var sb strings.Builder
+	sb.WriteString(tuistyles.SuccessStyle.Render("Done!") + "\n\n")
+	for _, r := range m.results {
+		sb.WriteString(tuistyles.SuccessStyle.Render(r) + "\n")
 	}
-
-	sb.WriteString("\n")
-
-	btnIdx := len(m.displayOrder)
-	btnStyle := tuistyles.ButtonStyle
-	if m.cursor == btnIdx {
-		btnStyle = tuistyles.ActiveButtonStyle
+	for _, e := range m.errors {
+		sb.WriteString(tuistyles.ErrorStyle.Render(e) + "\n")
 	}
-	sb.WriteString(btnStyle.Render("  Continue  ") + "\n")
-
 	return sb.String()
 }
 
+// viewSelection renders the interactive tool list with checkboxes and a Continue button.
+func (m *ToolsModel) viewSelection() string {
+	var sb strings.Builder
+	sb.WriteString(tuistyles.StatusStyle.Render("Select tools to install/remove (SPACE/ENTER to toggle):") + "\n\n")
+	for dp, item := range m.displayOrder {
+		sb.WriteString(m.viewToolRow(dp, item))
+	}
+	sb.WriteString("\n")
+	btnStyle := tuistyles.ButtonStyle
+	if m.cursor == len(m.displayOrder) {
+		btnStyle = tuistyles.ActiveButtonStyle
+	}
+	sb.WriteString(btnStyle.Render("  Continue  ") + "\n")
+	return sb.String()
+}
+
+// viewToolRow renders one row of the tool selection list.
+func (m *ToolsModel) viewToolRow(dp int, item toolItem) string {
+	tool := m.tools[item.idx]
+	available := m.isAvailable(dp)
+	checked := m.checked[item.idx]
+	pendingRemoval := m.toUninstall[item.idx]
+
+	cursorStr := "  "
+	if m.cursor == dp {
+		cursorStr = tuistyles.SelectedItemStyle.Render("▶ ")
+	}
+
+	prefix := treePrefix(item)
+	nameDesc := fmt.Sprintf("%-12s %s", tool.Name, tool.Description)
+
+	if !available {
+		hint := " [requires: " + strings.Join(tool.Requires, ", ") + "]"
+		return cursorStr + tuistyles.DisabledItemStyle.Render(prefix+"[  ] "+nameDesc+hint) + "\n"
+	}
+
+	versionStr := ""
+	if m.versions[item.idx] != "" {
+		versionStr = "  " + tuistyles.StatusStyle.Render(m.versions[item.idx])
+	}
+	rowContent := prefix + checkboxStr(checked, pendingRemoval) + " " +
+		m.rowRenderFn(dp, checked, pendingRemoval)(nameDesc) + versionStr
+	return cursorStr + rowContent + "\n"
+}
+
+// checkboxStr returns the styled checkbox string for the given selection state.
+func checkboxStr(checked, pendingRemoval bool) string {
+	switch {
+	case pendingRemoval:
+		return tuistyles.ErrorStyle.Render("[✗]")
+	case checked:
+		return tuistyles.CheckedItemStyle.Render("[✓]")
+	default:
+		return "[ ]"
+	}
+}
+
+// rowRenderFn returns the appropriate lipgloss render function for a tool row based on its state.
+func (m *ToolsModel) rowRenderFn(dp int, checked, pendingRemoval bool) func(...string) string {
+	switch {
+	case m.cursor == dp:
+		return tuistyles.SelectedItemStyle.Render
+	case pendingRemoval:
+		return tuistyles.ErrorStyle.Render
+	case checked:
+		return tuistyles.CheckedItemStyle.Render
+	default:
+		return tuistyles.ItemStyle.Render
+	}
+}
+
 // viewRunning renders the split-screen layout shown while operations execute.
-func (m *ToolsModel) viewRunning() string { //nolint:gocyclo
-	// Show abort confirmation overlay when the user pressed Ctrl+C.
+func (m *ToolsModel) viewRunning() string {
 	if m.abortMode {
 		return m.viewAbortConfirm()
 	}
-
 	totalWidth := m.width
 	if totalWidth < 40 {
 		totalWidth = 80 // sensible fallback before the first WindowSizeMsg
 	}
-
-	// Divide available width between the two bordered panes.
-	// Each RoundedBorder adds 2 chars (left + right), so inner = rendered - 2.
-	innerTotal := totalWidth - 4 // 2 borders × 2 panes
-	if innerTotal < 4 {
-		innerTotal = 4
-	}
-	leftInner := innerTotal * 35 / 100
-	if leftInner < 20 {
-		leftInner = 20
-	}
-	rightInner := innerTotal - leftInner
-	if rightInner < 10 {
-		rightInner = 10
-	}
-
-	// ── Left pane: operation list ──────────────────────────────────────────
-	var leftSB strings.Builder
-	leftSB.WriteString(tuistyles.PaneTitleStyle.Render("Operations") + "\n")
-
-	for i, op := range m.pendingOps {
-		action := "install"
-		if op.isUninstall {
-			action = "remove"
-		}
-		actionStr := tuistyles.StatusStyle.Render("(" + action + ")")
-
-		var icon string
-		var nameStr string
-		switch {
-		case i < m.opIdx:
-			if m.opSuccess[i] {
-				icon = tuistyles.SuccessStyle.Render("✓")
-				nameStr = tuistyles.SuccessStyle.Render(op.tool.Name)
-			} else {
-				icon = tuistyles.ErrorStyle.Render("✗")
-				nameStr = tuistyles.ErrorStyle.Render(op.tool.Name)
-			}
-		case i == m.opIdx:
-			icon = tuistyles.WarningStyle.Render("▶")
-			nameStr = tuistyles.SelectedItemStyle.Render(op.tool.Name)
-		default:
-			icon = tuistyles.StatusStyle.Render("○")
-			nameStr = tuistyles.ItemStyle.Render(op.tool.Name)
-		}
-		leftSB.WriteString(fmt.Sprintf(" %s %s %s\n", icon, nameStr, actionStr))
-	}
-
-	leftPane := tuistyles.OpPaneBorderStyle.
-		Width(leftInner).
-		Render(leftSB.String())
-
-	// ── Right pane: live log output ────────────────────────────────────────
-	var rightSB strings.Builder
-	logTitle := "Logs"
-	if m.currentTool != "" {
-		logTitle = "Logs: " + m.currentTool
-	}
-	rightSB.WriteString(tuistyles.PaneTitleStyle.Render(logTitle) + "\n")
-
-	logs := m.toolLogs[m.currentTool]
-	if len(logs) == 0 {
-		rightSB.WriteString(tuistyles.StatusStyle.Render("Waiting for output...") + "\n")
-	} else {
-		// Calculate how many lines fit in the pane (terminal height minus
-		// header/breadcrumb/footer/border overhead) with a sensible fallback.
-		visibleLines := m.height - 10
-		if visibleLines < 5 {
-			visibleLines = 5
-		}
-
-		// Cap the scroll offset so it never exceeds the scrollable range.
-		maxOffset := len(logs) - visibleLines
-		if maxOffset < 0 {
-			maxOffset = 0
-		}
-		offset := m.logScrollOffset
-		if offset > maxOffset {
-			offset = maxOffset
-		}
-
-		// Compute the slice to display (offset 0 = tail/newest).
-		start := len(logs) - visibleLines - offset
-		if start < 0 {
-			start = 0
-		}
-		end := start + visibleLines
-		if end > len(logs) {
-			end = len(logs)
-		}
-		visible := logs[start:end]
-
-		for _, line := range visible {
-			rightSB.WriteString(tuistyles.StatusStyle.Render(line) + "\n")
-		}
-
-		// Scroll indicator when the user has scrolled up.
-		if offset > 0 {
-			rightSB.WriteString(tuistyles.StatusStyle.Render(
-				fmt.Sprintf("↑ %d more line(s) below (scroll ↓ to follow)", offset),
-			) + "\n")
-		}
-	}
-
-	rightPane := tuistyles.LogPaneBorderStyle.
-		Width(rightInner).
-		Render(rightSB.String())
-
+	leftInner, rightInner := computePaneWidths(totalWidth)
+	leftPane := tuistyles.OpPaneBorderStyle.Width(leftInner).Render(m.viewOpList())
+	rightPane := tuistyles.LogPaneBorderStyle.Width(rightInner).Render(m.viewLogPane())
 	scrollHint := ""
 	if len(m.toolLogs[m.currentTool]) > 0 {
 		scrollHint = "  scroll: mouse wheel"
 	}
 	result := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 	return result + "\n" + tuistyles.StatusStyle.Render("Ctrl+C: abort"+scrollHint) + "\n"
+}
+
+// computePaneWidths calculates the inner widths of the two split-screen panes
+// given the total terminal width.
+func computePaneWidths(totalWidth int) (leftInner, rightInner int) {
+	// Each RoundedBorder adds 2 chars (left + right), so inner = rendered - 2.
+	innerTotal := totalWidth - 4 // 2 borders × 2 panes
+	if innerTotal < 4 {
+		innerTotal = 4
+	}
+	leftInner = innerTotal * 35 / 100
+	if leftInner < 20 {
+		leftInner = 20
+	}
+	rightInner = innerTotal - leftInner
+	if rightInner < 10 {
+		rightInner = 10
+	}
+	return
+}
+
+// viewOpList renders the left pane: a list of pending operations with status icons.
+func (m *ToolsModel) viewOpList() string {
+	var sb strings.Builder
+	sb.WriteString(tuistyles.PaneTitleStyle.Render("Operations") + "\n")
+	for i, op := range m.pendingOps {
+		icon, nameStr := m.opStatusStrings(i, op)
+		actionStr := tuistyles.StatusStyle.Render("(" + opActionLabel(op.isUninstall) + ")")
+		sb.WriteString(fmt.Sprintf(" %s %s %s\n", icon, nameStr, actionStr))
+	}
+	return sb.String()
+}
+
+// opActionLabel returns the human-readable action label for an operation.
+func opActionLabel(isUninstall bool) string {
+	if isUninstall {
+		return "remove"
+	}
+	return "install"
+}
+
+// opStatusStrings returns the styled icon and tool name for the operation at index i.
+func (m *ToolsModel) opStatusStrings(i int, op pendingOp) (icon, nameStr string) {
+	switch {
+	case i < m.opIdx:
+		if m.opSuccess[i] {
+			return tuistyles.SuccessStyle.Render("✓"), tuistyles.SuccessStyle.Render(op.tool.Name)
+		}
+		return tuistyles.ErrorStyle.Render("✗"), tuistyles.ErrorStyle.Render(op.tool.Name)
+	case i == m.opIdx:
+		return tuistyles.WarningStyle.Render("▶"), tuistyles.SelectedItemStyle.Render(op.tool.Name)
+	default:
+		return tuistyles.StatusStyle.Render("○"), tuistyles.ItemStyle.Render(op.tool.Name)
+	}
+}
+
+// viewLogPane renders the right pane: live log output for the current tool.
+func (m *ToolsModel) viewLogPane() string {
+	var sb strings.Builder
+	logTitle := "Logs"
+	if m.currentTool != "" {
+		logTitle = "Logs: " + m.currentTool
+	}
+	sb.WriteString(tuistyles.PaneTitleStyle.Render(logTitle) + "\n")
+	logs := m.toolLogs[m.currentTool]
+	if len(logs) == 0 {
+		sb.WriteString(tuistyles.StatusStyle.Render("Waiting for output...") + "\n")
+	} else {
+		m.appendScrolledLogs(&sb, logs)
+	}
+	return sb.String()
+}
+
+// appendScrolledLogs writes a windowed, scroll-adjusted slice of log lines into sb,
+// followed by a scroll indicator when the user has scrolled up from the tail.
+func (m *ToolsModel) appendScrolledLogs(sb *strings.Builder, logs []string) {
+	visibleLines := m.height - 10
+	if visibleLines < 5 {
+		visibleLines = 5
+	}
+	maxOffset := len(logs) - visibleLines
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	offset := m.logScrollOffset
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	start := len(logs) - visibleLines - offset
+	if start < 0 {
+		start = 0
+	}
+	end := start + visibleLines
+	if end > len(logs) {
+		end = len(logs)
+	}
+	for _, line := range logs[start:end] {
+		sb.WriteString(tuistyles.StatusStyle.Render(line) + "\n")
+	}
+	if offset > 0 {
+		sb.WriteString(tuistyles.StatusStyle.Render(
+			fmt.Sprintf("↑ %d more line(s) below (scroll ↓ to follow)", offset),
+		) + "\n")
+	}
 }
 
 // viewAbortConfirm renders the Ctrl+C abort confirmation overlay.

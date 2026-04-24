@@ -1,6 +1,10 @@
 # 🧭 devcfg — Linux/macOS Environment Configuration TUI
 
 [![Release](https://img.shields.io/github/v/release/I3-rett/devcfg)](https://github.com/I3-rett/devcfg/releases)
+[![Tests](https://github.com/I3-rett/devcfg/actions/workflows/test.yml/badge.svg)](https://github.com/I3-rett/devcfg/actions/workflows/test.yml)
+[![Pipeline](https://github.com/I3-rett/devcfg/actions/workflows/release.yml/badge.svg)](https://github.com/I3-rett/devcfg/actions/workflows/release.yml)
+[![Go Version](https://img.shields.io/badge/go-1.24%2B-00ADD8?logo=go)](https://go.dev/dl/)
+[![Go Report Card](https://goreportcard.com/badge/github.com/I3-rett/devcfg)](https://goreportcard.com/report/github.com/I3-rett/devcfg)
 
 `devcfg` is a CLI TUI written in Go that lets you **configure a Linux/macOS machine after an SSH connection**, without any built-in SSH logic.
 
@@ -43,7 +47,7 @@ chmod +x devcfg
 ### Step 1 — Tools Installation
 Interactive checklist of tools to install. Uses the system package manager (brew/apt) or a fallback script.
 
-Available tools: `git`, `neovim`, `docker`, `nodejs`, `python3`, `curl`, `tmux`, `htop`, `ripgrep`, `fzf`, `zsh`, `starship`
+Available tools: `git`, `neovim`, `docker`, `nodejs`, `python3`, `curl`, `tmux`, `htop`, `ripgrep`, `fzf`, `zsh`, `starship`, `bat`
 
 ```
 Step 1/4 — Tools Installation
@@ -89,7 +93,7 @@ devcfg/
 │   ├── system/detect.go            OS + package manager detection
 │   ├── registry/
 │   │   ├── registry.go             Tool registry (go:embed)
-│   │   └── tools.json              Tool definitions (12 tools)
+│   │   └── tools.json              Tool definitions (13 tools)
 │   ├── resolver/resolver.go        brew / apt / fallback selection
 │   ├── executor/executor.go        Command runner (stdout+stderr capture)
 │   └── tui/

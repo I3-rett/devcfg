@@ -139,7 +139,7 @@ func (a *AppModel) View() string {
 // Run starts the TUI application.
 func Run() error {
 	app := newApp()
-	p := tea.NewProgram(app, tea.WithAltScreen())
+	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
 }

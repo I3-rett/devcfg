@@ -144,3 +144,27 @@ func TestToolsModel_KeyboardBeforeLoaded_IsIgnored(t *testing.T) {
 		t.Errorf("cursor = %d; want 0 (keyboard ignored before loaded)", got.cursor)
 	}
 }
+
+func TestToolsModel_toolDetectMsg_ShortVersionsSlice_NoPanic(t *testing.T) {
+	m := NewToolsModel(system.Info{})
+	if len(m.tools) == 0 {
+		t.Skip("no tools in registry")
+	}
+	// Send a versions slice shorter than the number of tools; should not panic
+	// and should only populate the entries that were provided.
+	short := []string{"v1.0"} // length 1, regardless of how many tools there are
+	updated, _ := m.Update(toolDetectMsg{versions: short})
+	got := updated.(*ToolsModel)
+	if !got.loaded {
+		t.Error("model.loaded should be true after toolDetectMsg")
+	}
+	if got.versions[0] != "v1.0" {
+		t.Errorf("versions[0] = %q; want %q", got.versions[0], "v1.0")
+	}
+	// Entries beyond the provided slice must remain at their zero value.
+	for i := 1; i < len(got.tools); i++ {
+		if got.versions[i] != "" {
+			t.Errorf("versions[%d] = %q; want empty (not provided)", i, got.versions[i])
+		}
+	}
+}

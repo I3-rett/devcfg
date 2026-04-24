@@ -83,9 +83,13 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case toolDetectMsg:
-		m.versions = msg.versions
-		for i, v := range msg.versions {
-			if v != "" {
+		n := len(m.tools)
+		if len(msg.versions) < n {
+			n = len(msg.versions)
+		}
+		for i := 0; i < n; i++ {
+			m.versions[i] = msg.versions[i]
+			if msg.versions[i] != "" {
 				m.checked[i] = true
 			}
 		}

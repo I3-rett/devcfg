@@ -2,10 +2,13 @@ package system
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
 type Info struct {
@@ -70,19 +73,33 @@ func isInPath(name string) bool {
 	return err == nil
 }
 
-// DetectToolVersion checks whether a binary is in PATH and returns its version
-// string (first non-empty line of "--version"/"-V" output). Returns an empty
-// string if the binary is not found. If the binary exists but produces no
-// usable version output, it returns "<binary> (installed)" as a fallback.
+// DetectToolVersion checks whether a binary is in PATH and returns the first
+// non-empty line of its combined (stdout+stderr) output from "--version" or
+// "-V". A 5-second context timeout is applied to each probe so the UI never
+// hangs on a blocking binary. Returns an empty string if the binary is not
+// found. If the binary exists but produces no usable version output, it
+// returns "<binary> (installed)" as a fallback.
 func DetectToolVersion(binary string) string {
 	if _, err := exec.LookPath(binary); err != nil {
 		return ""
 	}
 	for _, flag := range []string{"--version", "-V"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		// binary comes from the compile-time embedded registry (tools.json), not user input.
-		out, err := exec.Command(binary, flag).Output() //nolint:gosec
-		if err == nil && len(out) > 0 {
-			return strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
+		out, err := exec.CommandContext(ctx, binary, flag).CombinedOutput() //nolint:gosec
+		cancel()
+		if err != nil {
+			// Allow ExitError (non-zero exit): the output may still contain a
+			// useful version string. Abort on any other error (timeout, etc.).
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
+				continue
+			}
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				return line
+			}
 		}
 	}
 	return binary + " (installed)"

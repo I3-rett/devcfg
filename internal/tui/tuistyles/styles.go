@@ -14,76 +14,76 @@ var (
 	red    = lipgloss.Color("#EF4444")
 
 	TitleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(purple).
-		MarginBottom(1)
+			Bold(true).
+			Foreground(purple).
+			MarginBottom(1)
 
 	StepIndicatorStyle = lipgloss.NewStyle().
-		Foreground(gray).
-		MarginBottom(1)
+				Foreground(gray).
+				MarginBottom(1)
 
 	ItemStyle = lipgloss.NewStyle().
-		Foreground(white)
+			Foreground(white)
 
 	SelectedItemStyle = lipgloss.NewStyle().
-		Foreground(teal).
-		Bold(true)
+				Foreground(teal).
+				Bold(true)
 
 	CheckedItemStyle = lipgloss.NewStyle().
-		Foreground(green)
+				Foreground(green)
 
 	ButtonStyle = lipgloss.NewStyle().
-		Foreground(gray).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(gray).
-		Padding(0, 2).
-		MarginTop(1)
+			Foreground(gray).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(gray).
+			Padding(0, 2).
+			MarginTop(1)
 
 	ActiveButtonStyle = lipgloss.NewStyle().
-		Foreground(white).
-		Background(purple).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(purple).
-		Padding(0, 2).
-		MarginTop(1)
+				Foreground(white).
+				Background(purple).
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(purple).
+				Padding(0, 2).
+				MarginTop(1)
 
 	StatusStyle = lipgloss.NewStyle().
-		Foreground(gray).
-		Italic(true)
+			Foreground(gray).
+			Italic(true)
 
 	SuccessStyle = lipgloss.NewStyle().
-		Foreground(green)
+			Foreground(green)
 
 	ErrorStyle = lipgloss.NewStyle().
-		Foreground(red)
+			Foreground(red)
 
 	WarningStyle = lipgloss.NewStyle().
-		Foreground(yellow)
+			Foreground(yellow)
 
 	DisabledItemStyle = lipgloss.NewStyle().
-		Foreground(gray).
-		Faint(true)
+				Foreground(gray).
+				Faint(true)
 
 	DividerStyle = lipgloss.NewStyle().
-		Foreground(gray)
+			Foreground(gray)
 
 	ConfirmStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(yellow).
-		Padding(1, 3).
-		MarginTop(1)
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(yellow).
+			Padding(1, 3).
+			MarginTop(1)
 
 	// Split-screen pane styles used during tool installation.
 	OpPaneBorderStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(gray)
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(gray)
 
 	LogPaneBorderStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(teal)
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(teal)
 
 	PaneTitleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(white).
-		MarginBottom(1)
+			Bold(true).
+			Foreground(white).
+			MarginBottom(1)
 )

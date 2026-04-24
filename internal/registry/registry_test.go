@@ -72,9 +72,9 @@ func TestFind_CaseSensitive(t *testing.T) {
 
 func TestBinaryName(t *testing.T) {
 	tests := []struct {
-		name   string
-		tool   Tool
-		want   string
+		name string
+		tool Tool
+		want string
 	}{
 		{"binary set", Tool{Name: "nodejs", Binary: "node"}, "node"},
 		{"binary empty falls back to name", Tool{Name: "git", Binary: ""}, "git"},

@@ -9,14 +9,14 @@ import (
 var toolsJSON []byte
 
 type Tool struct {
-	Name           string   `json:"name"`
-	Description    string   `json:"description"`
-	Binary         string   `json:"binary"`
-	BinaryAliases  []string `json:"binaryAliases,omitempty"`
-	Brew           string   `json:"brew"`
-	Apt            string   `json:"apt"`
-	Fallback       string   `json:"fallback"`
-	Requires       []string `json:"requires,omitempty"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description"`
+	Binary        string   `json:"binary"`
+	BinaryAliases []string `json:"binaryAliases,omitempty"`
+	Brew          string   `json:"brew"`
+	Apt           string   `json:"apt"`
+	Fallback      string   `json:"fallback"`
+	Requires      []string `json:"requires,omitempty"`
 }
 
 // BinaryName returns the primary executable name for the tool.

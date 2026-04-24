@@ -160,6 +160,73 @@ go build -o devcfg .
 
 ---
 
+## 🛠️ Dev Setup (Contributing)
+
+### Prerequisites
+
+- [Go 1.24+](https://go.dev/dl/)
+- `git`
+
+### Quickstart
+
+```bash
+# 1. Fork then clone the repo
+git clone https://github.com/<your-fork>/devcfg.git
+cd devcfg
+
+# 2. Download dependencies
+go mod download
+
+# 3. Build the binary
+go build -o devcfg .
+
+# 4. Run locally
+./devcfg
+```
+
+### Run without building
+
+```bash
+go run .
+```
+
+### Project layout
+
+```
+devcfg/
+├── main.go                        Entry point
+├── go.mod / go.sum                Module definition and lock file
+└── internal/
+    ├── system/detect.go           OS + package manager detection
+    ├── registry/
+    │   ├── registry.go            Tool registry (go:embed)
+    │   └── tools.json             Tool definitions
+    ├── resolver/resolver.go       brew / apt / fallback selection
+    ├── executor/executor.go       Command runner
+    └── tui/
+        ├── app.go                 Root Bubble Tea model (step orchestrator)
+        ├── tuistyles/styles.go    Lipgloss theme
+        └── steps/
+            ├── tools.go           Step 1 — Tools checklist
+            ├── git.go             Step 2 — Git config form
+            ├── docker.go          Step 3 — Docker checks
+            └── shell.go           Step 4 — Shell setup
+```
+
+### Making changes
+
+- **Add a new tool** — edit `internal/registry/tools.json` (rebuild required to embed the updated file).
+- **Add a new TUI step** — create a new file under `internal/tui/steps/`, implement the `tea.Model` interface, and wire it up in `internal/tui/app.go`.
+- **Change styling** — update the Lipgloss theme in `internal/tui/tuistyles/styles.go`.
+
+### Submitting a PR
+
+1. Create a feature branch: `git checkout -b feat/my-change`
+2. Make and commit your changes
+3. Open a pull request against `main`
+
+---
+
 ## 📦 CI/CD
 
 GitHub Actions workflow (`.github/workflows/release.yml`) triggers on `v*` tag pushes and:

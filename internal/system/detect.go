@@ -97,8 +97,9 @@ func DetectToolVersion(binary string) string {
 			}
 		}
 		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			if line = strings.TrimSpace(line); line != "" {
-				return line
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" {
+				return trimmed
 			}
 		}
 	}

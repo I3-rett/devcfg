@@ -18,3 +18,10 @@ linters:
 formatters:
   enable:
     - gofmt
+
+issues:
+  exclude-rules:
+    # BubbleTea Update and View methods are inherently complex due to the
+    # message-dispatch pattern; refactoring them would not improve readability.
+    - path: internal/tui/steps/tools\.go
+      linters: [gocyclo]

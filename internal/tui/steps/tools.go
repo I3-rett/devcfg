@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/I3-rett/devcfg/internal/executor"
 	"github.com/I3-rett/devcfg/internal/registry"
@@ -176,13 +176,13 @@ type ToolsModel struct {
 	height int
 
 	// Sequential installation state.
-	pendingOps     []pendingOp            // operations to execute in order
-	opIdx          int                    // index of the currently running op
-	opSuccess      []bool                 // per-op success flag (set on completion)
-	toolLogs       map[string][]string    // accumulated log lines per tool name
-	currentTool    string                 // name of the tool currently being installed
-	cancelFn       context.CancelFunc     // cancels the in-progress operation
-	logScrollOffset int                   // lines scrolled up from the bottom (0 = follow tail)
+	pendingOps      []pendingOp         // operations to execute in order
+	opIdx           int                 // index of the currently running op
+	opSuccess       []bool              // per-op success flag (set on completion)
+	toolLogs        map[string][]string // accumulated log lines per tool name
+	currentTool     string              // name of the tool currently being installed
+	cancelFn        context.CancelFunc  // cancels the in-progress operation
+	logScrollOffset int                 // lines scrolled up from the bottom (0 = follow tail)
 
 	// Ctrl+C abort confirmation overlay (shown while running).
 	abortMode   bool
@@ -214,14 +214,18 @@ func NewToolsModel(sysInfo system.Info) *ToolsModel {
 	}
 }
 
+// Title returns the display name of this step.
 func (m *ToolsModel) Title() string { return "Tools Installation" }
-func (m *ToolsModel) IsDone() bool  { return m.done }
+
+// IsDone reports whether the tool installation step has been completed.
+func (m *ToolsModel) IsDone() bool { return m.done }
 
 // CanQuit returns false while an installation is running or the abort
 // confirmation is visible, so that Ctrl+C is handled by the model itself
 // rather than immediately killing the program.
 func (m *ToolsModel) CanQuit() bool { return !m.running && !m.abortMode }
 
+// Init detects currently installed tool versions asynchronously.
 func (m *ToolsModel) Init() tea.Cmd {
 	tools := m.tools
 	return func() tea.Msg {
@@ -346,7 +350,8 @@ func (m *ToolsModel) hasRemovalPendingDep(displayPos int) bool {
 	return !m.isAvailable(displayPos)
 }
 
-func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+// Update handles messages for the tools installation step.
+func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:gocyclo
 	// Handle popup confirmation before anything else.
 	if m.popupMode {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
@@ -670,7 +675,8 @@ func waitForDone(toolName string, errCh chan error, isUninstall bool) tea.Cmd {
 	}
 }
 
-func (m *ToolsModel) View() string {
+// View renders the tools installation step.
+func (m *ToolsModel) View() string { //nolint:gocyclo
 	var sb strings.Builder
 
 	if m.popupMode {
@@ -761,7 +767,7 @@ func (m *ToolsModel) View() string {
 }
 
 // viewRunning renders the split-screen layout shown while operations execute.
-func (m *ToolsModel) viewRunning() string {
+func (m *ToolsModel) viewRunning() string { //nolint:gocyclo
 	// Show abort confirmation overlay when the user pressed Ctrl+C.
 	if m.abortMode {
 		return m.viewAbortConfirm()

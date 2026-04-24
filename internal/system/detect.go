@@ -11,11 +11,13 @@ import (
 	"time"
 )
 
+// Info holds the detected operating system and package manager.
 type Info struct {
 	OS             string // "macos", "ubuntu", "debian", "linux"
 	PackageManager string // "brew", "apt", "none"
 }
 
+// Detect identifies the current operating system and available package manager.
 func Detect() Info {
 	info := Info{OS: "linux", PackageManager: "none"}
 
@@ -46,7 +48,7 @@ func detectLinuxDistroFromFile(path string) string {
 	if err != nil {
 		return "linux"
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {

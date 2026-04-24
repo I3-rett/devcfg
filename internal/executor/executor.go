@@ -8,6 +8,7 @@ import (
 	"os/exec"
 )
 
+// Result holds the combined output and error of a command execution.
 type Result struct {
 	Output string
 	Err    error
@@ -32,7 +33,7 @@ func ExecuteWithContext(ctx context.Context, args []string, logCh chan<- string)
 	pr, pw := io.Pipe()
 	cmd.Stdout = pw
 	cmd.Stderr = pw
-	defer pr.Close() // ensure the read end is released when the function exits
+	defer func() { _ = pr.Close() }() // ensure the read end is released when the function exits
 
 	if err := cmd.Start(); err != nil {
 		_ = pw.Close()

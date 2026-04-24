@@ -44,6 +44,7 @@ func newApp() *AppModel {
 	}
 }
 
+// Init starts the first step.
 func (a *AppModel) Init() tea.Cmd {
 	if len(a.stepsList) == 0 {
 		return nil
@@ -51,6 +52,7 @@ func (a *AppModel) Init() tea.Cmd {
 	return a.stepsList[0].Init()
 }
 
+// Update handles incoming messages and advances the current step.
 func (a *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -96,6 +98,7 @@ func (a *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, cmd
 }
 
+// View renders the full application including header, breadcrumbs, and the current step.
 func (a *AppModel) View() string {
 	var sb strings.Builder
 

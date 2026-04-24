@@ -19,9 +19,15 @@ type installResultMsg struct {
 	err    error
 }
 
+type toolDetectMsg struct {
+	versions []string // one entry per tool; empty string means not installed
+}
+
 type ToolsModel struct {
 	tools    []registry.Tool
 	checked  []bool
+	versions []string // detected installed versions (empty = not installed)
+	loaded   bool
 	cursor   int
 	sysInfo  system.Info
 	done     bool
@@ -34,16 +40,26 @@ type ToolsModel struct {
 func NewToolsModel(sysInfo system.Info) *ToolsModel {
 	tools := registry.List()
 	return &ToolsModel{
-		tools:   tools,
-		checked: make([]bool, len(tools)),
-		sysInfo: sysInfo,
+		tools:    tools,
+		checked:  make([]bool, len(tools)),
+		versions: make([]string, len(tools)),
+		sysInfo:  sysInfo,
 	}
 }
 
 func (m *ToolsModel) Title() string { return "Tools Installation" }
 func (m *ToolsModel) IsDone() bool  { return m.done }
 
-func (m *ToolsModel) Init() tea.Cmd { return nil }
+func (m *ToolsModel) Init() tea.Cmd {
+	tools := m.tools
+	return func() tea.Msg {
+		versions := make([]string, len(tools))
+		for i, t := range tools {
+			versions[i] = system.DetectToolVersion(t.BinaryName())
+		}
+		return toolDetectMsg{versions: versions}
+	}
+}
 
 func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.running {
@@ -62,6 +78,22 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.done = true
 			}
 		}
+		return m, nil
+	}
+
+	switch msg := msg.(type) {
+	case toolDetectMsg:
+		m.versions = msg.versions
+		for i, v := range msg.versions {
+			if v != "" {
+				m.checked[i] = true
+			}
+		}
+		m.loaded = true
+		return m, nil
+	}
+
+	if !m.loaded {
 		return m, nil
 	}
 
@@ -157,6 +189,11 @@ func (m *ToolsModel) View() string {
 		return sb.String()
 	}
 
+	if !m.loaded {
+		sb.WriteString(tuistyles.StatusStyle.Render("Detecting installed tools...") + "\n")
+		return sb.String()
+	}
+
 	sb.WriteString(tuistyles.StatusStyle.Render("Select tools to install (SPACE/ENTER to toggle):") + "\n\n")
 
 	for i, tool := range m.tools {
@@ -175,7 +212,12 @@ func (m *ToolsModel) View() string {
 			style = tuistyles.SelectedItemStyle
 		}
 
-		line := fmt.Sprintf("%s%s %s", cursor, checkbox, style.Render(fmt.Sprintf("%-12s %s", tool.Name, tool.Description)))
+		versionStr := ""
+		if m.versions[i] != "" {
+			versionStr = "  " + tuistyles.StatusStyle.Render(m.versions[i])
+		}
+
+		line := fmt.Sprintf("%s%s %s%s", cursor, checkbox, style.Render(fmt.Sprintf("%-12s %s", tool.Name, tool.Description)), versionStr)
 		sb.WriteString(line + "\n")
 	}
 

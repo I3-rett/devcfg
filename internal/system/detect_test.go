@@ -88,3 +88,19 @@ func TestDetect_ReturnsInfo(t *testing.T) {
 		t.Errorf("Detect().PackageManager = %q; want one of brew/apt/none", info.PackageManager)
 	}
 }
+
+func TestDetectToolVersion_KnownBinary(t *testing.T) {
+	// "sh" is universally available and should return a non-empty version string
+	// or at minimum the "(installed)" fallback.
+	v := DetectToolVersion("sh")
+	if v == "" {
+		t.Error("DetectToolVersion(\"sh\") = \"\"; want non-empty string")
+	}
+}
+
+func TestDetectToolVersion_MissingBinary(t *testing.T) {
+	v := DetectToolVersion("_devcfg_nonexistent_binary_xyz")
+	if v != "" {
+		t.Errorf("DetectToolVersion(nonexistent) = %q; want empty string", v)
+	}
+}

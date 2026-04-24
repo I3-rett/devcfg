@@ -11,9 +11,19 @@ var toolsJSON []byte
 type Tool struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Binary      string `json:"binary"`
 	Brew        string `json:"brew"`
 	Apt         string `json:"apt"`
 	Fallback    string `json:"fallback"`
+}
+
+// BinaryName returns the executable name for the tool.
+// Falls back to Name when the Binary field is empty.
+func (t Tool) BinaryName() string {
+	if t.Binary != "" {
+		return t.Binary
+	}
+	return t.Name
 }
 
 var tools []Tool

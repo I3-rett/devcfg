@@ -69,3 +69,19 @@ func isInPath(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
 }
+
+// DetectToolVersion checks whether a binary is in PATH and returns its version
+// string (first line of output). Returns an empty string if the binary is not
+// found or produces no usable output.
+func DetectToolVersion(binary string) string {
+	if _, err := exec.LookPath(binary); err != nil {
+		return ""
+	}
+	for _, flag := range []string{"--version", "-V"} {
+		out, err := exec.Command(binary, flag).Output() //nolint:gosec
+		if err == nil && len(out) > 0 {
+			return strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
+		}
+	}
+	return binary + " (installed)"
+}

@@ -78,6 +78,7 @@ func DetectToolVersion(binary string) string {
 		return ""
 	}
 	for _, flag := range []string{"--version", "-V"} {
+		// binary comes from the compile-time embedded registry (tools.json), not user input.
 		out, err := exec.Command(binary, flag).Output() //nolint:gosec
 		if err == nil && len(out) > 0 {
 			return strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]

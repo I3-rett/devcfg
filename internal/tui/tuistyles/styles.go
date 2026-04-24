@@ -66,4 +66,10 @@ var (
 
 	DividerStyle = lipgloss.NewStyle().
 		Foreground(gray)
+
+	ConfirmStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(yellow).
+		Padding(1, 3).
+		MarginTop(1)
 )

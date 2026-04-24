@@ -27,6 +27,7 @@ type dockerActionDoneMsg struct {
 	err    error
 }
 
+// DockerModel manages the Docker setup step.
 type DockerModel struct {
 	status    dockerStatus
 	loaded    bool
@@ -36,14 +37,21 @@ type DockerModel struct {
 	actionErr error
 }
 
+// NewDockerModel creates a new DockerModel.
 func NewDockerModel() *DockerModel {
 	return &DockerModel{}
 }
 
-func (m *DockerModel) Title() string  { return "Docker Setup" }
-func (m *DockerModel) IsDone() bool   { return m.done }
-func (m *DockerModel) CanQuit() bool  { return true }
+// Title returns the display name of this step.
+func (m *DockerModel) Title() string { return "Docker Setup" }
 
+// IsDone reports whether the Docker setup step has been completed.
+func (m *DockerModel) IsDone() bool { return m.done }
+
+// CanQuit always returns true for the Docker step.
+func (m *DockerModel) CanQuit() bool { return true }
+
+// Init triggers the initial Docker status check.
 func (m *DockerModel) Init() tea.Cmd {
 	return m.checkDocker()
 }
@@ -85,6 +93,7 @@ func (m *DockerModel) checkDocker() tea.Cmd {
 	}
 }
 
+// Update handles messages for the Docker setup step.
 func (m *DockerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case dockerStatusMsg:
@@ -134,6 +143,7 @@ func (m *DockerModel) addToDockerGroup() tea.Cmd {
 	}
 }
 
+// View renders the Docker setup step.
 func (m *DockerModel) View() string {
 	var sb strings.Builder
 

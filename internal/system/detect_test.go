@@ -43,7 +43,7 @@ func TestDetectLinuxDistro_UnknownDistro(t *testing.T) {
 }
 
 func TestDetectLinuxDistro_QuotedID(t *testing.T) {
-	path := writeOSRelease(t, `ID="ubuntu"` + "\n")
+	path := writeOSRelease(t, `ID="ubuntu"`+"\n")
 	got := detectLinuxDistroFromFile(path)
 	if got != "ubuntu" {
 		t.Errorf("detectLinuxDistroFromFile (quoted ID) = %q; want %q", got, "ubuntu")

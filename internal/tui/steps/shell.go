@@ -37,12 +37,12 @@ type shellInitMsg struct {
 }
 
 type shellApplyDoneMsg struct {
-	output string
-	err    error
+	err error
 }
 
+// ShellModel manages the shell setup step.
 type ShellModel struct {
-	currentShell string
+	currentShell  string
 	selectedShell shellOption
 	addAliases    bool
 	focusIdx      int // 0=keep, 1=zsh, 2=bash, 3=aliases toggle, 4=continue
@@ -52,14 +52,21 @@ type ShellModel struct {
 	statusErr     bool
 }
 
+// NewShellModel creates a new ShellModel.
 func NewShellModel() *ShellModel {
 	return &ShellModel{}
 }
 
-func (m *ShellModel) Title() string  { return "Shell Setup" }
-func (m *ShellModel) IsDone() bool   { return m.done }
-func (m *ShellModel) CanQuit() bool  { return true }
+// Title returns the display name of this step.
+func (m *ShellModel) Title() string { return "Shell Setup" }
 
+// IsDone reports whether the shell setup step has been completed.
+func (m *ShellModel) IsDone() bool { return m.done }
+
+// CanQuit always returns true for the Shell step.
+func (m *ShellModel) CanQuit() bool { return true }
+
+// Init detects the current shell asynchronously.
 func (m *ShellModel) Init() tea.Cmd {
 	return func() tea.Msg {
 		shell := os.Getenv("SHELL")
@@ -70,6 +77,7 @@ func (m *ShellModel) Init() tea.Cmd {
 	}
 }
 
+// Update handles messages for the shell setup step.
 func (m *ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case shellInitMsg:
@@ -208,6 +216,7 @@ func findShell(name string) string {
 	return ""
 }
 
+// View renders the shell setup step.
 func (m *ShellModel) View() string {
 	var sb strings.Builder
 

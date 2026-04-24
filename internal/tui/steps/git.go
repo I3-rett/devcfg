@@ -11,6 +11,7 @@ import (
 	"github.com/I3-rett/devcfg/internal/tui/tuistyles"
 )
 
+// GitModel manages the Git configuration step.
 type GitModel struct {
 	nameInput  textinput.Model
 	emailInput textinput.Model
@@ -21,6 +22,7 @@ type GitModel struct {
 	statusErr  bool
 }
 
+// NewGitModel creates a new GitModel with default text inputs.
 func NewGitModel() *GitModel {
 	name := textinput.New()
 	name.Placeholder = "Your Name"
@@ -37,14 +39,21 @@ func NewGitModel() *GitModel {
 	}
 }
 
-func (m *GitModel) Title() string  { return "Git Configuration" }
-func (m *GitModel) IsDone() bool   { return m.done }
-func (m *GitModel) CanQuit() bool  { return true }
+// Title returns the display name of this step.
+func (m *GitModel) Title() string { return "Git Configuration" }
 
+// IsDone reports whether the Git configuration step has been completed.
+func (m *GitModel) IsDone() bool { return m.done }
+
+// CanQuit always returns true for the Git step.
+func (m *GitModel) CanQuit() bool { return true }
+
+// Init starts cursor blinking for text inputs.
 func (m *GitModel) Init() tea.Cmd {
 	return textinput.Blink
 }
 
+// Update handles messages for the Git configuration step.
 func (m *GitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -79,9 +88,10 @@ func (m *GitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	if m.focusIdx == 0 {
+	switch m.focusIdx {
+	case 0:
 		m.nameInput, cmd = m.nameInput.Update(msg)
-	} else if m.focusIdx == 1 {
+	case 1:
 		m.emailInput, cmd = m.emailInput.Update(msg)
 	}
 	return m, cmd
@@ -141,6 +151,7 @@ func (m *GitModel) applyGitConfig() tea.Cmd {
 	}
 }
 
+// View renders the Git configuration step.
 func (m *GitModel) View() string {
 	var sb strings.Builder
 

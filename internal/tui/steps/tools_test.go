@@ -1022,4 +1022,3 @@ func TestToolsModel_Running_WindowSizeMsg_UpdatesWidth(t *testing.T) {
 		t.Errorf("width = %d; want 120 after WindowSizeMsg while running", got.width)
 	}
 }
-

@@ -1,0 +1,41 @@
+name: Lint
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  lint:
+    name: Run golangci-lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run golangci-lint
+        if: github.event_name != 'pull_request'
+        uses: golangci/golangci-lint-action@v8
+        with:
+          args: --config .golangci.yml
+
+      - name: Suggest lint fixes on PR
+        if: github.event_name == 'pull_request'
+        uses: reviewdog/action-golangci-lint@v2
+        with:
+          golangci_lint_flags: --config .golangci.yml
+          reporter: github-pr-review
+          level: warning
+          fail_on_error: true

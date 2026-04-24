@@ -10,5 +10,5 @@
   {"name":"ripgrep","description":"Fast grep replacement","brew":"ripgrep","apt":"ripgrep","fallback":""},
   {"name":"fzf","description":"Fuzzy finder","brew":"fzf","apt":"fzf","fallback":""},
   {"name":"zsh","description":"Z shell","brew":"zsh","apt":"zsh","fallback":""},
-  {"name":"starship","description":"Cross-shell prompt","brew":"starship","apt":"","fallback":"curl -sS https://starship.rs/install.sh | sh -s -- --yes"}
+  {"name":"starship","description":"Cross-shell prompt","brew":"starship","apt":"","fallback":""}
 ]

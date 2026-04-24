@@ -1,1 +1,265 @@
+```
+# 🧭 devcfg — Linux/macOS Environment Configuration TUI (Go + Bubble Tea)
 
+## 🎯 Objectif
+
+`devcfg` est un CLI TUI en Go permettant de **configurer une machine Linux/macOS après connexion SSH manuelle**, sans intégration SSH.
+
+Workflow :
+
+1. l’utilisateur se connecte en SSH manuellement
+2. il télécharge et lance `devcfg`
+3. il suit un workflow TUI structuré en étapes
+4. il configure son environnement (tools, git, docker, shell…)
+5. tout est exécuté localement sur la machine distante
+
+---
+
+# 🧱 1. Architecture générale
+
+Le système est structuré en couches :
+
+## UI layer (Bubble Tea)
+- interface TUI inspirée de `tssh`
+- navigation clavier-first
+- workflow multi-étapes
+- état visuel clair et minimal
+
+## Workflow layer
+- orchestration des étapes :
+  - installation tools
+  - git config
+  - docker setup
+  - shell setup
+
+## Registry layer
+- définition des tools + actions configurables (JSON)
+
+## Resolver layer
+- sélection automatique du package manager :
+  - brew (macOS)
+  - apt (Debian/Ubuntu)
+  - fallback scripts
+
+## Installer layer
+- adapters brew / apt / custom scripts
+
+## Executor layer
+- exécution réelle des commandes
+
+## System layer
+- détection OS
+
+---
+
+# 🧭 2. Workflow global (multi-étapes)
+
+`devcfg` est un **workflow séquentiel**, pas un simple installateur.
+
+---
+
+## 🪜 Étape 1 — Tools installation
+
+Objectif :
+- sélectionner et installer des outils
+
+Exemples :
+- git
+- neovim
+- docker
+- nodejs
+
+UI :
+- checklist interactive
+
+---
+
+## 🪜 Étape 2 — Git configuration
+
+Objectif :
+- configurer identité git
+
+Actions :
+- user.name
+- user.email
+- option signing
+
+UI :
+- formulaire TUI simple
+
+---
+
+## 🪜 Étape 3 — Docker setup
+
+Objectif :
+- vérifier installation
+- ajouter user au groupe docker
+- vérifier daemon
+
+---
+
+## 🪜 Étape 4 — Shell setup
+
+Objectif :
+- config shell (zsh/bash)
+- aliases
+- environnement de base
+
+---
+
+# 🎮 3. UX TUI (IMPORTANT — style type tssh)
+
+Interface pensée pour usage SSH :
+
+## Navigation clavier
+
+- ↑ / ↓ : naviguer dans les items
+- SPACE : toggle sélection (checkbox)
+- ENTER :
+  - si sur item → toggle sélection
+  - si sur bouton → valider étape
+
+---
+
+## 💡 Concept UI clé : double ENTER behavior
+
+### 1. ENTER sur item
+- toggle sélection (✔ / ✖)
+
+### 2. ENTER sur bouton "Continue"
+- valide toute l’étape
+- lance l’exécution
+
+---
+
+## Structure visuelle d’une étape
+
+Exemple :
+
+
+Step 1/4 — Tools installation
+
+[ ] git
+[x] neovim
+[ ] docker
+[ ] nodejs
+
+---
+
+## UX règles importantes
+
+- sélection rapide clavier-first
+- aucune souris
+- retour visuel immédiat
+- status clair (selected / installed / pending)
+
+---
+
+# ⚙️ 4. Modèle Tool
+
+Chaque tool contient :
+
+- name
+- description
+- brew package (optionnel)
+- apt package (optionnel)
+- fallback script (optionnel)
+
+👉 aucun coupling système dans le tool
+
+---
+
+# 🧠 5. Resolver (cœur logique)
+
+Ordre de priorité :
+
+1. brew si dispo + package défini
+2. apt si dispo + package défini
+3. fallback script
+
+👉 totalement transparent pour le workflow
+
+---
+
+# 🖥️ 6. Détection OS
+
+Détection automatique :
+
+- macOS → brew
+- Ubuntu → apt
+- Debian → apt
+- Linux générique → fallback
+
+---
+
+# 🧾 7. Registry JSON
+
+Contient :
+
+- tools installables
+- actions de configuration (git/docker/shell)
+- mappings OS → package manager
+
+Avantages :
+- modifiable sans rebuild
+- versionnable
+- extensible
+
+---
+
+# 🔁 8. Moteur d’exécution
+
+Pipeline par action :
+
+1. sélection utilisateur
+2. résolution package manager
+3. exécution commande
+4. affichage output live
+
+Fallback :
+- scripts bash si nécessaire
+
+---
+
+# 📦 9. CI/CD
+
+Build automatique :
+
+- Linux amd64
+- macOS arm64
+
+Publication :
+
+- GitHub Releases
+- binaire téléchargeable
+
+---
+
+# 🌍 10. Distribution
+
+Workflow final :
+
+1. SSH manuel
+2. download binaire via curl
+3. exécution `devcfg`
+4. workflow interactif complet
+
+---
+
+# 🧠 Résumé conceptuel
+
+`devcfg` est :
+
+> un orchestrateur TUI de configuration d’environnement machine post-SSH basé sur un workflow multi-étapes
+
+---
+
+# 🧩 Philosophie
+
+- SSH-external (aucune logique SSH interne)
+- local execution only
+- workflow structuré (pas juste un installer)
+- UX clavier-first type tssh
+- deterministic + minimal
+- extensible via registry JSON
+```

@@ -26,13 +26,13 @@ type toolDetectMsg struct {
 // toolItem is one row in the tree-shaped display list.
 type toolItem struct {
 	idx             int    // index in ToolsModel.tools
-	depth           int    // 0 = root, 1 = first-level child, …
+	depth           int    // 0 = root, 1 = first-level child, ...
 	isLast          bool   // last sibling at this depth level
-	parentContinues []bool // for each ancestor at depth ≥ 1, whether it had more siblings
+	parentContinues []bool // for each ancestor at depth >= 1, whether it had more siblings
 }
 
 // treePrefix builds the visual tree connector string for a toolItem.
-// depth=0 → empty; depth=1 → "├── " or "└── "; depth=2 → "│   ├── " etc.
+// depth=0 -> empty; depth=1 -> "├── " or "└── "; depth=2 -> "│   ├── " etc.
 func treePrefix(item toolItem) string {
 	if item.depth == 0 {
 		return ""
@@ -55,7 +55,8 @@ func treePrefix(item toolItem) string {
 
 // buildDisplayOrder returns tools in tree order: each tool's dependents appear
 // directly below it, indented. Tools without requires (or whose requires are
-// not in the registry) are roots.
+// not in the registry) are roots. A visited set guards against cycles and
+// duplicate entries so a malformed tools.json cannot cause infinite recursion.
 func buildDisplayOrder(tools []registry.Tool) []toolItem {
 	nameToIdx := make(map[string]int, len(tools))
 	for i, t := range tools {
@@ -85,9 +86,14 @@ func buildDisplayOrder(tools []registry.Tool) []toolItem {
 		}
 	}
 
+	visited := make([]bool, len(tools))
 	var order []toolItem
 	var addItem func(idx, depth int, isLast bool, parentContinues []bool)
 	addItem = func(idx, depth int, isLast bool, parentContinues []bool) {
+		if visited[idx] {
+			return
+		}
+		visited[idx] = true
 		order = append(order, toolItem{
 			idx:             idx,
 			depth:           depth,
@@ -97,7 +103,7 @@ func buildDisplayOrder(tools []registry.Tool) []toolItem {
 		children := childrenOf[tools[idx].Name]
 		for j, childIdx := range children {
 			childIsLast := j == len(children)-1
-			// parentContinues for depth-1 child: ancestors at depth≥1 only.
+			// parentContinues for depth-1 child: ancestors at depth>=1 only.
 			// A root (depth=0) does not contribute a continuation line.
 			var childParentCont []bool
 			if depth > 0 {
@@ -115,14 +121,15 @@ func buildDisplayOrder(tools []registry.Tool) []toolItem {
 	return order
 }
 
+// ToolsModel is the Bubble Tea model for the tool-selection step.
 type ToolsModel struct {
 	tools        []registry.Tool
-	nameToIdx    map[string]int // tool name → index in tools
+	nameToIdx    map[string]int // tool name -> index in tools
 	displayOrder []toolItem     // tree-ordered display items
 	checked      []bool         // indexed by tool index
 	versions     []string       // indexed by tool index; empty = not installed
 	loaded       bool
-	cursor       int // position in displayOrder (0 … len(displayOrder) = Continue)
+	cursor       int // position in displayOrder (0 ... len(displayOrder) = Continue)
 	sysInfo      system.Info
 	done         bool
 	running      bool
@@ -132,255 +139,261 @@ type ToolsModel struct {
 	msgLines     []string
 }
 
+// NewToolsModel initialises the model with the full tool registry.
 func NewToolsModel(sysInfo system.Info) *ToolsModel {
-tools := registry.List()
-nameToIdx := make(map[string]int, len(tools))
-for i, t := range tools {
-nameToIdx[t.Name] = i
-}
-return &ToolsModel{
-tools:        tools,
-nameToIdx:    nameToIdx,
-displayOrder: buildDisplayOrder(tools),
-checked:      make([]bool, len(tools)),
-versions:     make([]string, len(tools)),
-sysInfo:      sysInfo,
-}
+	tools := registry.List()
+	nameToIdx := make(map[string]int, len(tools))
+	for i, t := range tools {
+		nameToIdx[t.Name] = i
+	}
+	return &ToolsModel{
+		tools:        tools,
+		nameToIdx:    nameToIdx,
+		displayOrder: buildDisplayOrder(tools),
+		checked:      make([]bool, len(tools)),
+		versions:     make([]string, len(tools)),
+		sysInfo:      sysInfo,
+	}
 }
 
 func (m *ToolsModel) Title() string { return "Tools Installation" }
 func (m *ToolsModel) IsDone() bool  { return m.done }
 
 func (m *ToolsModel) Init() tea.Cmd {
-tools := m.tools
-return func() tea.Msg {
-versions := make([]string, len(tools))
-for i, t := range tools {
-versions[i] = system.DetectToolVersion(t.BinaryName())
-}
-return toolDetectMsg{versions: versions}
-}
+	tools := m.tools
+	return func() tea.Msg {
+		versions := make([]string, len(tools))
+		for i, t := range tools {
+			versions[i] = system.DetectToolVersion(t.BinaryName())
+		}
+		return toolDetectMsg{versions: versions}
+	}
 }
 
 // isAvailable returns true when all tools listed in Requires for the item at
 // displayPos are either already installed (version detected) or checked.
 func (m *ToolsModel) isAvailable(displayPos int) bool {
-tool := m.tools[m.displayOrder[displayPos].idx]
-for _, req := range tool.Requires {
-reqIdx, ok := m.nameToIdx[req]
-if !ok {
-continue
-}
-if m.versions[reqIdx] == "" && !m.checked[reqIdx] {
-return false
-}
-}
-return true
+	tool := m.tools[m.displayOrder[displayPos].idx]
+	for _, req := range tool.Requires {
+		reqIdx, ok := m.nameToIdx[req]
+		if !ok {
+			continue
+		}
+		if m.versions[reqIdx] == "" && !m.checked[reqIdx] {
+			return false
+		}
+	}
+	return true
 }
 
 // cascadeUncheck iteratively unchecks every checked tool that has become
 // unavailable. This propagates transitively through the dependency tree.
 func (m *ToolsModel) cascadeUncheck() {
-changed := true
-for changed {
-changed = false
-for dp, item := range m.displayOrder {
-if m.checked[item.idx] && !m.isAvailable(dp) {
-m.checked[item.idx] = false
-changed = true
-}
-}
-}
+	changed := true
+	for changed {
+		changed = false
+		for dp, item := range m.displayOrder {
+			if m.checked[item.idx] && !m.isAvailable(dp) {
+				m.checked[item.idx] = false
+				changed = true
+			}
+		}
+	}
 }
 
-// setChecked toggles the checked state and propagates unchecks to dependents.
+// setChecked updates the checked state for the tool at displayPos and
+// propagates auto-unchecks to any dependents that would become unavailable.
 func (m *ToolsModel) setChecked(displayPos int, val bool) {
-m.checked[m.displayOrder[displayPos].idx] = val
-if !val {
-m.cascadeUncheck()
-}
+	m.checked[m.displayOrder[displayPos].idx] = val
+	if !val {
+		m.cascadeUncheck()
+	}
 }
 
 func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-if m.running {
-switch msg := msg.(type) {
-case installResultMsg:
-if msg.err != nil {
-m.errors = append(m.errors, fmt.Sprintf("✗ %s: %s", msg.name, msg.err.Error()))
-} else {
-m.results = append(m.results, fmt.Sprintf("✓ %s installed", msg.name))
-}
-m.msgLines = append(m.msgLines, msg.output)
-if len(m.results)+len(m.errors) >= m.installCount {
-m.running = false
-m.done = true
-}
-}
-return m, nil
-}
+	if m.running {
+		switch msg := msg.(type) {
+		case installResultMsg:
+			if msg.err != nil {
+				m.errors = append(m.errors, fmt.Sprintf("✗ %s: %s", msg.name, msg.err.Error()))
+			} else {
+				m.results = append(m.results, fmt.Sprintf("✓ %s installed", msg.name))
+			}
+			m.msgLines = append(m.msgLines, msg.output)
+			if len(m.results)+len(m.errors) >= m.installCount {
+				m.running = false
+				m.done = true
+			}
+		}
+		return m, nil
+	}
 
-switch msg := msg.(type) {
-case toolDetectMsg:
-n := len(m.tools)
-if len(msg.versions) < n {
-n = len(msg.versions)
-}
-for i := 0; i < n; i++ {
-m.versions[i] = msg.versions[i]
-if msg.versions[i] != "" {
-m.checked[i] = true
-}
-}
-// Uncheck tools whose dependencies are not yet installed/selected.
-m.cascadeUncheck()
-m.loaded = true
-return m, nil
-}
+	switch msg := msg.(type) {
+	case toolDetectMsg:
+		n := len(m.tools)
+		if len(msg.versions) < n {
+			n = len(msg.versions)
+		}
+		for i := 0; i < n; i++ {
+			m.versions[i] = msg.versions[i]
+			if msg.versions[i] != "" {
+				m.checked[i] = true
+			}
+		}
+		// Uncheck tools whose dependencies are not yet installed/selected.
+		m.cascadeUncheck()
+		m.loaded = true
+		return m, nil
+	}
 
-if !m.loaded {
-return m, nil
-}
+	if !m.loaded {
+		return m, nil
+	}
 
-continueIdx := len(m.displayOrder)
+	continueIdx := len(m.displayOrder)
 
-switch msg := msg.(type) {
-case tea.KeyMsg:
-switch msg.String() {
-case "up", "k":
-if m.cursor > 0 {
-m.cursor--
-}
-case "down", "j":
-if m.cursor < continueIdx {
-m.cursor++
-}
-case " ":
-if m.cursor < continueIdx && m.isAvailable(m.cursor) {
-m.setChecked(m.cursor, !m.checked[m.displayOrder[m.cursor].idx])
-}
-case "enter":
-if m.cursor < continueIdx {
-if m.isAvailable(m.cursor) {
-m.setChecked(m.cursor, !m.checked[m.displayOrder[m.cursor].idx])
-}
-} else {
-return m, m.startInstallation()
-}
-}
-}
-return m, nil
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "down", "j":
+			if m.cursor < continueIdx {
+				m.cursor++
+			}
+		case " ":
+			if m.cursor < continueIdx && m.isAvailable(m.cursor) {
+				m.setChecked(m.cursor, !m.checked[m.displayOrder[m.cursor].idx])
+			}
+		case "enter":
+			if m.cursor < continueIdx {
+				if m.isAvailable(m.cursor) {
+					m.setChecked(m.cursor, !m.checked[m.displayOrder[m.cursor].idx])
+				}
+			} else {
+				return m, m.startInstallation()
+			}
+		}
+	}
+	return m, nil
 }
 
 func (m *ToolsModel) startInstallation() tea.Cmd {
-// Collect tools in display order so dependencies are installed before dependents.
-var selected []registry.Tool
-for dp, item := range m.displayOrder {
-if m.checked[item.idx] && m.isAvailable(dp) {
-selected = append(selected, m.tools[item.idx])
-}
-}
-if len(selected) == 0 {
-m.done = true
-return nil
-}
-m.running = true
-m.installCount = len(selected)
-cmds := make([]tea.Cmd, len(selected))
-for i, tool := range selected {
-t := tool
-cmds[i] = func() tea.Msg {
-args, err := resolver.Resolve(t, m.sysInfo)
-if err != nil {
-return installResultMsg{name: t.Name, err: err}
-}
-res := executor.Execute(args)
-return installResultMsg{name: t.Name, output: res.Output, err: res.Err}
-}
-}
-return tea.Sequence(cmds...)
+	// Collect tools in display order so dependencies are installed before dependents.
+	var selected []registry.Tool
+	for dp, item := range m.displayOrder {
+		if m.checked[item.idx] && m.isAvailable(dp) {
+			selected = append(selected, m.tools[item.idx])
+		}
+	}
+	if len(selected) == 0 {
+		m.done = true
+		return nil
+	}
+	m.running = true
+	m.installCount = len(selected)
+	cmds := make([]tea.Cmd, len(selected))
+	for i, tool := range selected {
+		t := tool
+		cmds[i] = func() tea.Msg {
+			// Re-detect the package manager at install time so that a dependency
+			// installed earlier in the sequence (e.g. brew) is visible to the
+			// resolver when processing subsequent tools.
+			sysInfo := system.Detect()
+			args, err := resolver.Resolve(t, sysInfo)
+			if err != nil {
+				return installResultMsg{name: t.Name, err: err}
+			}
+			res := executor.Execute(args)
+			return installResultMsg{name: t.Name, output: res.Output, err: res.Err}
+		}
+	}
+	return tea.Sequence(cmds...)
 }
 
 func (m *ToolsModel) View() string {
-var sb strings.Builder
+	var sb strings.Builder
 
-if m.running {
-sb.WriteString(tuistyles.StatusStyle.Render("Installing selected tools...") + "\n\n")
-for _, r := range m.results {
-sb.WriteString(tuistyles.SuccessStyle.Render(r) + "\n")
-}
-for _, e := range m.errors {
-sb.WriteString(tuistyles.ErrorStyle.Render(e) + "\n")
-}
-return sb.String()
-}
+	if m.running {
+		sb.WriteString(tuistyles.StatusStyle.Render("Installing selected tools...") + "\n\n")
+		for _, r := range m.results {
+			sb.WriteString(tuistyles.SuccessStyle.Render(r) + "\n")
+		}
+		for _, e := range m.errors {
+			sb.WriteString(tuistyles.ErrorStyle.Render(e) + "\n")
+		}
+		return sb.String()
+	}
 
-if m.done {
-sb.WriteString(tuistyles.SuccessStyle.Render("Installation complete!") + "\n\n")
-for _, r := range m.results {
-sb.WriteString(tuistyles.SuccessStyle.Render(r) + "\n")
-}
-for _, e := range m.errors {
-sb.WriteString(tuistyles.ErrorStyle.Render(e) + "\n")
-}
-return sb.String()
-}
+	if m.done {
+		sb.WriteString(tuistyles.SuccessStyle.Render("Installation complete!") + "\n\n")
+		for _, r := range m.results {
+			sb.WriteString(tuistyles.SuccessStyle.Render(r) + "\n")
+		}
+		for _, e := range m.errors {
+			sb.WriteString(tuistyles.ErrorStyle.Render(e) + "\n")
+		}
+		return sb.String()
+	}
 
-if !m.loaded {
-sb.WriteString(tuistyles.StatusStyle.Render("Detecting installed tools...") + "\n")
-return sb.String()
-}
+	if !m.loaded {
+		sb.WriteString(tuistyles.StatusStyle.Render("Detecting installed tools...") + "\n")
+		return sb.String()
+	}
 
-sb.WriteString(tuistyles.StatusStyle.Render("Select tools to install (SPACE/ENTER to toggle):") + "\n\n")
+	sb.WriteString(tuistyles.StatusStyle.Render("Select tools to install (SPACE/ENTER to toggle):") + "\n\n")
 
-for dp, item := range m.displayOrder {
-tool := m.tools[item.idx]
-available := m.isAvailable(dp)
-checked := m.checked[item.idx]
+	for dp, item := range m.displayOrder {
+		tool := m.tools[item.idx]
+		available := m.isAvailable(dp)
+		checked := m.checked[item.idx]
 
-cursorStr := "  "
-if m.cursor == dp {
-cursorStr = tuistyles.SelectedItemStyle.Render("▶ ")
-}
+		cursorStr := "  "
+		if m.cursor == dp {
+			cursorStr = tuistyles.SelectedItemStyle.Render("▶ ")
+		}
 
-checkbox := "[ ]"
-if checked {
-checkbox = "[✓]"
-}
+		checkbox := "[ ]"
+		if checked {
+			checkbox = "[✓]"
+		}
 
-prefix := treePrefix(item)
-nameDesc := fmt.Sprintf("%-12s %s", tool.Name, tool.Description)
+		prefix := treePrefix(item)
+		nameDesc := fmt.Sprintf("%-12s %s", tool.Name, tool.Description)
 
-var rowContent string
-if !available {
-hint := " [requires: " + strings.Join(tool.Requires, ", ") + "]"
-rowContent = tuistyles.DisabledItemStyle.Render(prefix+checkbox+" "+nameDesc+hint)
-} else {
-renderName := tuistyles.ItemStyle.Render
-if m.cursor == dp {
-renderName = tuistyles.SelectedItemStyle.Render
-} else if checked {
-renderName = tuistyles.CheckedItemStyle.Render
-}
+		var rowContent string
+		if !available {
+			hint := " [requires: " + strings.Join(tool.Requires, ", ") + "]"
+			rowContent = tuistyles.DisabledItemStyle.Render(prefix + checkbox + " " + nameDesc + hint)
+		} else {
+			renderName := tuistyles.ItemStyle.Render
+			if m.cursor == dp {
+				renderName = tuistyles.SelectedItemStyle.Render
+			} else if checked {
+				renderName = tuistyles.CheckedItemStyle.Render
+			}
 
-versionStr := ""
-if m.versions[item.idx] != "" {
-versionStr = "  " + tuistyles.StatusStyle.Render(m.versions[item.idx])
-}
+			versionStr := ""
+			if m.versions[item.idx] != "" {
+				versionStr = "  " + tuistyles.StatusStyle.Render(m.versions[item.idx])
+			}
 
-rowContent = prefix + checkbox + " " + renderName(nameDesc) + versionStr
-}
+			rowContent = prefix + checkbox + " " + renderName(nameDesc) + versionStr
+		}
 
-sb.WriteString(cursorStr + rowContent + "\n")
-}
+		sb.WriteString(cursorStr + rowContent + "\n")
+	}
 
-sb.WriteString("\n")
+	sb.WriteString("\n")
 
-btnIdx := len(m.displayOrder)
-btnStyle := tuistyles.ButtonStyle
-if m.cursor == btnIdx {
-btnStyle = tuistyles.ActiveButtonStyle
-}
-sb.WriteString(btnStyle.Render("  Continue  ") + "\n")
+	btnIdx := len(m.displayOrder)
+	btnStyle := tuistyles.ButtonStyle
+	if m.cursor == btnIdx {
+		btnStyle = tuistyles.ActiveButtonStyle
+	}
+	sb.WriteString(btnStyle.Render("  Continue  ") + "\n")
 
-return sb.String()
+	return sb.String()
 }

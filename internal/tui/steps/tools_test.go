@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/I3-rett/devcfg/internal/registry"
 	"github.com/I3-rett/devcfg/internal/system"
 )
 
@@ -172,188 +173,232 @@ func TestToolsModel_toolDetectMsg_ShortVersionsSlice_NoPanic(t *testing.T) {
 // ── tree / dependency helpers ────────────────────────────────────────────────
 
 func TestBuildDisplayOrder_RootsAppearBeforeChildren(t *testing.T) {
-m := NewToolsModel(system.Info{})
-brewIdx := -1
-lazyIdx := -1
-for i, t2 := range m.tools {
-switch t2.Name {
-case "brew":
-brewIdx = i
-case "lazydocker":
-lazyIdx = i
-}
-}
-if brewIdx < 0 || lazyIdx < 0 {
-t.Skip("brew or lazydocker not found in registry")
-}
+	m := NewToolsModel(system.Info{})
+	brewIdx := -1
+	lazyIdx := -1
+	for i, t2 := range m.tools {
+		switch t2.Name {
+		case "brew":
+			brewIdx = i
+		case "lazydocker":
+			lazyIdx = i
+		}
+	}
+	if brewIdx < 0 || lazyIdx < 0 {
+		t.Skip("brew or lazydocker not found in registry")
+	}
 
-// Find their display positions.
-brewDP := -1
-lazyDP := -1
-for dp, item := range m.displayOrder {
-if item.idx == brewIdx {
-brewDP = dp
-}
-if item.idx == lazyIdx {
-lazyDP = dp
-}
-}
-if brewDP < 0 || lazyDP < 0 {
-t.Fatal("brew or lazydocker not present in displayOrder")
-}
-if brewDP >= lazyDP {
-t.Errorf("brew at display position %d should come before lazydocker at %d", brewDP, lazyDP)
-}
+	// Find their display positions.
+	brewDP := -1
+	lazyDP := -1
+	for dp, item := range m.displayOrder {
+		if item.idx == brewIdx {
+			brewDP = dp
+		}
+		if item.idx == lazyIdx {
+			lazyDP = dp
+		}
+	}
+	if brewDP < 0 || lazyDP < 0 {
+		t.Fatal("brew or lazydocker not present in displayOrder")
+	}
+	if brewDP >= lazyDP {
+		t.Errorf("brew at display position %d should come before lazydocker at %d", brewDP, lazyDP)
+	}
 }
 
 func TestBuildDisplayOrder_ChildHasGreaterDepth(t *testing.T) {
-m := NewToolsModel(system.Info{})
-for _, item := range m.displayOrder {
-tool := m.tools[item.idx]
-if len(tool.Requires) > 0 {
-if item.depth == 0 {
-t.Errorf("tool %q has requires but depth=0 in displayOrder", tool.Name)
+	m := NewToolsModel(system.Info{})
+	for _, item := range m.displayOrder {
+		tool := m.tools[item.idx]
+		if len(tool.Requires) > 0 {
+			if item.depth == 0 {
+				t.Errorf("tool %q has requires but depth=0 in displayOrder", tool.Name)
+			}
+		}
+	}
 }
+
+func TestBuildDisplayOrder_CycleNoPanic(t *testing.T) {
+	// A synthetic cyclic graph: A requires B, B requires A.
+	// buildDisplayOrder must not hang or panic.
+	tools := []struct {
+		name     string
+		requires []string
+	}{
+		{"a", []string{"b"}},
+		{"b", []string{"a"}},
+	}
+	regs := make([]registry.Tool, len(tools))
+	for i, tc := range tools {
+		regs[i] = registry.Tool{Name: tc.name, Description: tc.name, Requires: tc.requires}
+	}
+	// Should not hang.
+	_ = buildDisplayOrder(regs)
 }
-}
+
+func TestBuildDisplayOrder_EachToolAppearsOnce(t *testing.T) {
+	m := NewToolsModel(system.Info{})
+	seen := make(map[int]int)
+	for _, item := range m.displayOrder {
+		seen[item.idx]++
+	}
+	for idx, count := range seen {
+		if count > 1 {
+			t.Errorf("tool %q appears %d times in displayOrder; want exactly 1", m.tools[idx].Name, count)
+		}
+	}
 }
 
 func TestTreePrefix_Root(t *testing.T) {
-item := toolItem{idx: 0, depth: 0, isLast: false}
-if got := treePrefix(item); got != "" {
-t.Errorf("treePrefix(root) = %q; want empty string", got)
-}
+	item := toolItem{idx: 0, depth: 0, isLast: false}
+	if got := treePrefix(item); got != "" {
+		t.Errorf("treePrefix(root) = %q; want empty string", got)
+	}
 }
 
 func TestTreePrefix_FirstLevelNotLast(t *testing.T) {
-item := toolItem{idx: 0, depth: 1, isLast: false, parentContinues: nil}
-got := treePrefix(item)
-if !strings.Contains(got, "├") {
-t.Errorf("treePrefix(depth=1, notLast) = %q; want to contain ├", got)
-}
+	item := toolItem{idx: 0, depth: 1, isLast: false, parentContinues: nil}
+	got := treePrefix(item)
+	if !strings.Contains(got, "├") {
+		t.Errorf("treePrefix(depth=1, notLast) = %q; want to contain ├", got)
+	}
 }
 
 func TestTreePrefix_FirstLevelLast(t *testing.T) {
-item := toolItem{idx: 0, depth: 1, isLast: true, parentContinues: nil}
-got := treePrefix(item)
-if !strings.Contains(got, "└") {
-t.Errorf("treePrefix(depth=1, isLast) = %q; want to contain └", got)
-}
+	item := toolItem{idx: 0, depth: 1, isLast: true, parentContinues: nil}
+	got := treePrefix(item)
+	if !strings.Contains(got, "└") {
+		t.Errorf("treePrefix(depth=1, isLast) = %q; want to contain └", got)
+	}
 }
 
 func TestIsAvailable_NoRequires(t *testing.T) {
-m := NewToolsModel(system.Info{})
-n := len(m.tools)
-versions := makeVersions(n) // nothing installed
-got := newLoadedModel(versions)
+	m := NewToolsModel(system.Info{})
+	n := len(m.tools)
+	versions := makeVersions(n) // nothing installed
+	got := newLoadedModel(versions)
 
-for dp, item := range got.displayOrder {
-if len(got.tools[item.idx].Requires) == 0 {
-if !got.isAvailable(dp) {
-t.Errorf("tool %q (no requires) should be available", got.tools[item.idx].Name)
-}
-}
-}
+	for dp, item := range got.displayOrder {
+		if len(got.tools[item.idx].Requires) == 0 {
+			if !got.isAvailable(dp) {
+				t.Errorf("tool %q (no requires) should be available", got.tools[item.idx].Name)
+			}
+		}
+	}
 }
 
 func TestIsAvailable_RequiresNotInstalled(t *testing.T) {
-m := NewToolsModel(system.Info{})
-n := len(m.tools)
-versions := makeVersions(n) // nothing installed
-got := newLoadedModel(versions)
+	m := NewToolsModel(system.Info{})
+	n := len(m.tools)
+	versions := makeVersions(n) // nothing installed
+	got := newLoadedModel(versions)
 
-for dp, item := range got.displayOrder {
-tool := got.tools[item.idx]
-if len(tool.Requires) > 0 {
-if got.isAvailable(dp) {
-t.Errorf("tool %q should not be available when its requires are not installed/checked", tool.Name)
-}
-}
-}
+	for dp, item := range got.displayOrder {
+		tool := got.tools[item.idx]
+		if len(tool.Requires) > 0 {
+			if got.isAvailable(dp) {
+				t.Errorf("tool %q should not be available when its requires are not installed/checked", tool.Name)
+			}
+		}
+	}
 }
 
 func TestIsAvailable_RequiresInstalledViaVersion(t *testing.T) {
-m := NewToolsModel(system.Info{})
-n := len(m.tools)
-versions := makeVersions(n)
-// Install brew (index 0).
-versions[0] = "Homebrew 4.0.0"
-got := newLoadedModel(versions)
+	m := NewToolsModel(system.Info{})
+	n := len(m.tools)
+	versions := makeVersions(n)
 
-for dp, item := range got.displayOrder {
-tool := got.tools[item.idx]
-for _, req := range tool.Requires {
-if req == "brew" {
-if !got.isAvailable(dp) {
-t.Errorf("tool %q should be available when brew is installed", tool.Name)
-}
-}
-}
-}
+	// Find brew by name rather than by a hardcoded index.
+	brewIdx := -1
+	for i, tool := range m.tools {
+		if tool.Name == "brew" {
+			brewIdx = i
+			break
+		}
+	}
+	if brewIdx < 0 {
+		t.Skip("brew not in registry")
+	}
+
+	// Mark brew as installed.
+	versions[brewIdx] = "Homebrew 4.0.0"
+	got := newLoadedModel(versions)
+
+	for dp, item := range got.displayOrder {
+		tool := got.tools[item.idx]
+		for _, req := range tool.Requires {
+			if req == "brew" {
+				if !got.isAvailable(dp) {
+					t.Errorf("tool %q should be available when brew is installed", tool.Name)
+				}
+			}
+		}
+	}
 }
 
 func TestCascadeUncheck_UnchecksDependent(t *testing.T) {
-// Scenario: brew is NOT installed (no version), user checks brew then lazydocker.
-// When brew is unchecked again, lazydocker must be auto-unchecked because its
-// dependency (brew) is no longer installed or selected.
-m := NewToolsModel(system.Info{})
-n := len(m.tools)
-versions := makeVersions(n) // nothing installed
-got := newLoadedModel(versions)
+	// Scenario: brew is NOT installed (no version), user checks brew then lazydocker.
+	// When brew is unchecked again, lazydocker must be auto-unchecked because its
+	// dependency (brew) is no longer installed or selected.
+	m := NewToolsModel(system.Info{})
+	n := len(m.tools)
+	versions := makeVersions(n) // nothing installed
+	got := newLoadedModel(versions)
 
-// Find brew and lazydocker display positions.
-brewDP := -1
-lazyDP := -1
-for dp, item := range got.displayOrder {
-switch got.tools[item.idx].Name {
-case "brew":
-brewDP = dp
-case "lazydocker":
-lazyDP = dp
-}
-}
-if brewDP < 0 || lazyDP < 0 {
-t.Skip("brew or lazydocker not in registry")
-}
+	// Find brew and lazydocker display positions.
+	brewDP := -1
+	lazyDP := -1
+	for dp, item := range got.displayOrder {
+		switch got.tools[item.idx].Name {
+		case "brew":
+			brewDP = dp
+		case "lazydocker":
+			lazyDP = dp
+		}
+	}
+	if brewDP < 0 || lazyDP < 0 {
+		t.Skip("brew or lazydocker not in registry")
+	}
 
-// Check brew first so lazydocker becomes available.
-got.setChecked(brewDP, true)
-if !got.isAvailable(lazyDP) {
-t.Fatal("lazydocker should be available once brew is checked")
-}
+	// Check brew first so lazydocker becomes available.
+	got.setChecked(brewDP, true)
+	if !got.isAvailable(lazyDP) {
+		t.Fatal("lazydocker should be available once brew is checked")
+	}
 
-// Check lazydocker.
-got.setChecked(lazyDP, true)
+	// Check lazydocker.
+	got.setChecked(lazyDP, true)
 
-// Uncheck brew — cascade must propagate and uncheck lazydocker.
-got.setChecked(brewDP, false)
+	// Uncheck brew — cascade must propagate and uncheck lazydocker.
+	got.setChecked(brewDP, false)
 
-if got.checked[got.displayOrder[lazyDP].idx] {
-t.Error("lazydocker should have been auto-unchecked after brew was unchecked")
-}
+	if got.checked[got.displayOrder[lazyDP].idx] {
+		t.Error("lazydocker should have been auto-unchecked after brew was unchecked")
+	}
 }
 
 func TestToolsModel_View_ShowsRequiresHint(t *testing.T) {
-m := NewToolsModel(system.Info{})
-n := len(m.tools)
-versions := makeVersions(n) // nothing installed → lazydocker is disabled
-got := newLoadedModel(versions)
+	m := NewToolsModel(system.Info{})
+	n := len(m.tools)
+	versions := makeVersions(n) // nothing installed -> lazydocker is disabled
+	got := newLoadedModel(versions)
 
-view := got.View()
-if !strings.Contains(view, "requires:") {
-t.Errorf("View() should show a 'requires:' hint for disabled tools, got:\n%s", view)
-}
+	view := got.View()
+	if !strings.Contains(view, "requires:") {
+		t.Errorf("View() should show a 'requires:' hint for disabled tools, got:\n%s", view)
+	}
 }
 
 func TestToolsModel_View_ShowsTreeConnector(t *testing.T) {
-m := NewToolsModel(system.Info{})
-n := len(m.tools)
-versions := makeVersions(n)
-got := newLoadedModel(versions)
+	m := NewToolsModel(system.Info{})
+	n := len(m.tools)
+	versions := makeVersions(n)
+	got := newLoadedModel(versions)
 
-view := got.View()
-// The tree connector ├ or └ should appear for lazydocker.
-if !strings.Contains(view, "├") && !strings.Contains(view, "└") {
-t.Errorf("View() should contain tree connectors (├ or └), got:\n%s", view)
-}
+	view := got.View()
+	// The tree connector ├ or └ should appear for lazydocker.
+	if !strings.Contains(view, "├") && !strings.Contains(view, "└") {
+		t.Errorf("View() should contain tree connectors (├ or └), got:\n%s", view)
+	}
 }

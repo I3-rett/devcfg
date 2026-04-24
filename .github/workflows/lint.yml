@@ -26,6 +26,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Run golangci-lint
+        if: github.event_name != 'pull_request'
         uses: golangci/golangci-lint-action@v8
         with:
           args: --config .golangci.yml
@@ -37,4 +38,4 @@ jobs:
           golangci_lint_flags: --config .golangci.yml
           reporter: github-pr-review
           level: warning
-          fail_level: never
+          fail_on_error: true

@@ -70,6 +70,26 @@ func TestFind_CaseSensitive(t *testing.T) {
 	}
 }
 
+func TestBinaryName(t *testing.T) {
+	tests := []struct {
+		name   string
+		tool   Tool
+		want   string
+	}{
+		{"binary set", Tool{Name: "nodejs", Binary: "node"}, "node"},
+		{"binary empty falls back to name", Tool{Name: "git", Binary: ""}, "git"},
+		{"binary same as name", Tool{Name: "curl", Binary: "curl"}, "curl"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.tool.BinaryName()
+			if got != tc.want {
+				t.Errorf("BinaryName() = %q; want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestList_ContainsExpectedTools(t *testing.T) {
 	expected := []string{"git", "neovim", "docker", "nodejs", "python3", "curl", "tmux", "htop", "ripgrep", "fzf", "zsh", "starship"}
 	index := make(map[string]bool, len(List()))

@@ -60,6 +60,10 @@ var (
 	WarningStyle = lipgloss.NewStyle().
 		Foreground(yellow)
 
+	DisabledItemStyle = lipgloss.NewStyle().
+		Foreground(gray).
+		Faint(true)
+
 	DividerStyle = lipgloss.NewStyle().
 		Foreground(gray)
 )

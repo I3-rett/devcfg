@@ -1,7 +1,9 @@
 [
+  {"name":"brew","description":"Homebrew package manager","binary":"brew","brew":"","apt":"","fallback":"/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""},
   {"name":"git","description":"Version control system","binary":"git","brew":"git","apt":"git","fallback":""},
   {"name":"neovim","description":"Hyperextensible text editor","binary":"nvim","brew":"neovim","apt":"neovim","fallback":""},
   {"name":"docker","description":"Container platform","binary":"docker","brew":"docker","apt":"docker.io","fallback":""},
+  {"name":"lazydocker","description":"Docker TUI","binary":"lazydocker","brew":"jesseduffield/lazydocker/lazydocker","apt":"","fallback":"curl -fsSL https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_via_script.sh | bash","requires":["brew"]},
   {"name":"nodejs","description":"JavaScript runtime","binary":"node","brew":"node","apt":"nodejs","fallback":""},
   {"name":"python3","description":"Python 3 interpreter","binary":"python3","brew":"python3","apt":"python3","fallback":""},
   {"name":"curl","description":"HTTP client","binary":"curl","brew":"curl","apt":"curl","fallback":""},

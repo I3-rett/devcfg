@@ -227,7 +227,12 @@ func (m *ToolsModel) Init() tea.Cmd {
 	return func() tea.Msg {
 		versions := make([]string, len(tools))
 		for i, t := range tools {
-			versions[i] = system.DetectToolVersion(t.BinaryName())
+			for _, bin := range t.BinaryNames() {
+				if ver := system.DetectToolVersion(bin); ver != "" {
+					versions[i] = ver
+					break
+				}
+			}
 		}
 		return toolDetectMsg{versions: versions}
 	}
@@ -397,9 +402,20 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.MouseMsg:
 			if msg.Action == tea.MouseActionPress {
+				logs := m.toolLogs[m.currentTool]
+				visibleLines := m.height - 10
+				if visibleLines < 5 {
+					visibleLines = 5
+				}
+				maxOffset := len(logs) - visibleLines
+				if maxOffset < 0 {
+					maxOffset = 0
+				}
 				switch msg.Button {
 				case tea.MouseButtonWheelUp:
-					m.logScrollOffset++
+					if m.logScrollOffset < maxOffset {
+						m.logScrollOffset++
+					}
 				case tea.MouseButtonWheelDown:
 					if m.logScrollOffset > 0 {
 						m.logScrollOffset--

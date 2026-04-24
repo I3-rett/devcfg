@@ -90,8 +90,57 @@ func TestBinaryName(t *testing.T) {
 	}
 }
 
+func TestBinaryNames(t *testing.T) {
+	tests := []struct {
+		name string
+		tool Tool
+		want []string
+	}{
+		{"no aliases falls back to BinaryName", Tool{Name: "git", Binary: "git"}, []string{"git"}},
+		{"no aliases no binary falls back to name", Tool{Name: "curl"}, []string{"curl"}},
+		{"aliases returned as-is", Tool{Name: "bat", Binary: "bat", BinaryAliases: []string{"bat", "batcat"}}, []string{"bat", "batcat"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.tool.BinaryNames()
+			if len(got) != len(tc.want) {
+				t.Fatalf("BinaryNames() = %v; want %v", got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("BinaryNames()[%d] = %q; want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestBat_HasBinaryAliases(t *testing.T) {
+	tool := Find("bat")
+	if tool == nil {
+		t.Fatal("Find(\"bat\") = nil; want non-nil")
+	}
+	aliases := tool.BinaryNames()
+	hasBat := false
+	hasBatcat := false
+	for _, a := range aliases {
+		if a == "bat" {
+			hasBat = true
+		}
+		if a == "batcat" {
+			hasBatcat = true
+		}
+	}
+	if !hasBat {
+		t.Errorf("bat tool BinaryNames() = %v; want to contain \"bat\"", aliases)
+	}
+	if !hasBatcat {
+		t.Errorf("bat tool BinaryNames() = %v; want to contain \"batcat\"", aliases)
+	}
+}
+
 func TestList_ContainsExpectedTools(t *testing.T) {
-	expected := []string{"brew", "git", "neovim", "docker", "lazydocker", "nodejs", "python3", "curl", "tmux", "htop", "ripgrep", "fzf", "zsh", "starship"}
+	expected := []string{"brew", "git", "neovim", "docker", "lazydocker", "nodejs", "python3", "curl", "tmux", "htop", "ripgrep", "fzf", "zsh", "starship", "bat"}
 	index := make(map[string]bool, len(List()))
 	for _, tool := range List() {
 		index[tool.Name] = true

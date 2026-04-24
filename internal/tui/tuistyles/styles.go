@@ -72,4 +72,18 @@ var (
 		BorderForeground(yellow).
 		Padding(1, 3).
 		MarginTop(1)
+
+	// Split-screen pane styles used during tool installation.
+	OpPaneBorderStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(gray)
+
+	LogPaneBorderStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(teal)
+
+	PaneTitleStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(white).
+		MarginBottom(1)
 )

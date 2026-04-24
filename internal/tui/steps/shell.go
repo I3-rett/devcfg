@@ -56,8 +56,9 @@ func NewShellModel() *ShellModel {
 	return &ShellModel{}
 }
 
-func (m *ShellModel) Title() string { return "Shell Setup" }
-func (m *ShellModel) IsDone() bool  { return m.done }
+func (m *ShellModel) Title() string  { return "Shell Setup" }
+func (m *ShellModel) IsDone() bool   { return m.done }
+func (m *ShellModel) CanQuit() bool  { return true }
 
 func (m *ShellModel) Init() tea.Cmd {
 	return func() tea.Msg {

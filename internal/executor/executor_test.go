@@ -1,8 +1,10 @@
 package executor
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestExecute_EmptyArgs(t *testing.T) {
@@ -54,5 +56,45 @@ func TestExecute_CombinesStdoutAndStderr(t *testing.T) {
 	}
 	if !strings.Contains(res.Output, "err") {
 		t.Errorf("Output missing stderr content; got %q", res.Output)
+	}
+}
+
+func TestExecuteWithContext_LogChannelReceivesLines(t *testing.T) {
+	logCh := make(chan string, 16)
+	res := ExecuteWithContext(context.Background(), []string{"printf", "line1\\nline2\\nline3\\n"}, logCh)
+	// ExecuteWithContext returns only after all lines have been forwarded.
+	close(logCh)
+	if res.Err != nil {
+		t.Fatalf("unexpected error: %v", res.Err)
+	}
+	var lines []string
+	for l := range logCh {
+		lines = append(lines, l)
+	}
+	if len(lines) != 3 {
+		t.Errorf("got %d lines on logCh; want 3: %v", len(lines), lines)
+	}
+	for i, want := range []string{"line1", "line2", "line3"} {
+		if i >= len(lines) || lines[i] != want {
+			t.Errorf("lines[%d] = %q; want %q", i, lines[i], want)
+		}
+	}
+}
+
+func TestExecuteWithContext_CancellationTerminatesProcess(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan Result, 1)
+	go func() {
+		done <- ExecuteWithContext(ctx, []string{"sleep", "60"}, nil)
+	}()
+	// Cancel immediately; the process should be killed and the call return quickly.
+	cancel()
+	select {
+	case res := <-done:
+		if res.Err == nil {
+			t.Error("expected non-nil error after context cancellation; got nil")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ExecuteWithContext did not return within 5s after context cancellation")
 	}
 }

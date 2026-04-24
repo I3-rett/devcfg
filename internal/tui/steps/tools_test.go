@@ -1,6 +1,7 @@
 package steps
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -844,6 +845,181 @@ func TestToggleOrConfirm_SelectedOnlyDepGoesToDeselectedList(t *testing.T) {
 		if d == "lazydocker" {
 			t.Errorf("popupDeps = %v; should not contain lazydocker (it is not installed)", m.popupDeps)
 		}
+	}
+}
+
+// ── running-phase: Ctrl+C abort flow ─────────────────────────────────────────
+
+// runningModel returns a ToolsModel placed directly in the running state with
+// n synthetic pending operations, so tests can send messages without starting
+// real goroutines.
+func runningModel(n int) *ToolsModel {
+	m := NewToolsModel(system.Info{})
+	ops := make([]pendingOp, n)
+	for i := range ops {
+		ops[i] = pendingOp{tool: registry.Tool{Name: fmt.Sprintf("tool%d", i)}, isUninstall: false}
+	}
+	m.pendingOps = ops
+	m.opIdx = 0
+	m.opSuccess = make([]bool, n)
+	m.toolLogs = make(map[string][]string)
+	m.currentTool = ops[0].tool.Name
+	m.running = true
+	return m
+}
+
+func TestToolsModel_Running_CtrlC_EntersAbortMode(t *testing.T) {
+	m := runningModel(1)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	got := updated.(*ToolsModel)
+	if !got.abortMode {
+		t.Error("abortMode should be true after ctrl+c while running")
+	}
+	if !got.running {
+		t.Error("running should still be true when abort mode is entered")
+	}
+}
+
+func TestToolsModel_Running_AbortConfirm_YesTransitionsToDone(t *testing.T) {
+	m := runningModel(1)
+	m.abortMode = true
+	m.abortCursor = 0 // "Yes, Abort"
+
+	cancelled := false
+	m.cancelFn = func() { cancelled = true }
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(*ToolsModel)
+
+	if !got.done {
+		t.Error("done should be true after confirming abort")
+	}
+	if got.running {
+		t.Error("running should be false after confirming abort")
+	}
+	if !cancelled {
+		t.Error("cancelFn should have been called on abort confirmation")
+	}
+	found := false
+	for _, e := range got.errors {
+		if strings.Contains(e, "aborted") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("errors should contain an 'aborted' message; got %v", got.errors)
+	}
+}
+
+func TestToolsModel_Running_AbortConfirm_EscDismisses(t *testing.T) {
+	m := runningModel(1)
+	m.abortMode = true
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(*ToolsModel)
+
+	if got.abortMode {
+		t.Error("abortMode should be false after ESC")
+	}
+	if !got.running {
+		t.Error("running should remain true after ESC")
+	}
+}
+
+func TestToolsModel_Running_AbortConfirm_CancelKeepsRunning(t *testing.T) {
+	m := runningModel(1)
+	m.abortMode = true
+	m.abortCursor = 1 // "Continue"
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(*ToolsModel)
+
+	if got.done {
+		t.Error("done should be false after choosing Continue in abort dialog")
+	}
+	if !got.running {
+		t.Error("running should remain true after choosing Continue in abort dialog")
+	}
+}
+
+// ── running-phase: sequential op driver ──────────────────────────────────────
+
+func TestToolsModel_Running_InstallResult_AdvancesOpIdx(t *testing.T) {
+	m := runningModel(2)
+	m.currentTool = "tool0"
+
+	// Simulate successful install of tool0. opIdx advances 0→1; startNextOp
+	// launches tool1 (which would start a real goroutine), so we use a single-
+	// op model instead to keep the test synchronous.
+	m2 := runningModel(1) // 1 op: after advancing, startNextOp returns nil (done)
+	updated, _ := m2.Update(installResultMsg{name: "tool0"})
+	got := updated.(*ToolsModel)
+
+	if got.opIdx != 1 {
+		t.Errorf("opIdx = %d; want 1 after installResultMsg", got.opIdx)
+	}
+	if !got.opSuccess[0] {
+		t.Error("opSuccess[0] should be true for a successful install")
+	}
+	if !got.done {
+		t.Error("done should be true once all ops complete")
+	}
+}
+
+func TestToolsModel_Running_InstallResult_MarksFailure(t *testing.T) {
+	m := runningModel(1)
+	updated, _ := m.Update(installResultMsg{name: "tool0", err: fmt.Errorf("install failed")})
+	got := updated.(*ToolsModel)
+
+	if got.opSuccess[0] {
+		t.Error("opSuccess[0] should be false for a failed install")
+	}
+	if len(got.errors) == 0 {
+		t.Error("errors should contain an entry for the failed install")
+	}
+}
+
+func TestToolsModel_Running_UninstallResult_AdvancesOpIdx(t *testing.T) {
+	m := runningModel(1)
+	m.pendingOps[0].isUninstall = true
+
+	updated, _ := m.Update(uninstallResultMsg{name: "tool0"})
+	got := updated.(*ToolsModel)
+
+	if got.opIdx != 1 {
+		t.Errorf("opIdx = %d; want 1 after uninstallResultMsg", got.opIdx)
+	}
+	if !got.opSuccess[0] {
+		t.Error("opSuccess[0] should be true for a successful uninstall")
+	}
+}
+
+func TestToolsModel_Running_LogLineMsg_AppendsCappedAtMax(t *testing.T) {
+	m := runningModel(1)
+	m.currentTool = "tool0"
+
+	// Fill past the cap.
+	for i := 0; i < logMaxLines+5; i++ {
+		ch := make(chan string)
+		close(ch) // closed channel → waitForLog returns logDoneMsg next tick
+		updated, _ := m.Update(logLineMsg{toolName: "tool0", line: fmt.Sprintf("line%d", i), ch: ch})
+		m = updated.(*ToolsModel)
+	}
+
+	stored := m.toolLogs["tool0"]
+	if len(stored) > logMaxLines {
+		t.Errorf("toolLogs[tool0] has %d entries; want at most %d", len(stored), logMaxLines)
+	}
+}
+
+func TestToolsModel_Running_WindowSizeMsg_UpdatesWidth(t *testing.T) {
+	m := runningModel(1)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	got := updated.(*ToolsModel)
+
+	if got.width != 120 {
+		t.Errorf("width = %d; want 120 after WindowSizeMsg while running", got.width)
 	}
 }
 

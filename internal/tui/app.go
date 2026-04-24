@@ -15,6 +15,9 @@ type stepModel interface {
 	tea.Model
 	IsDone() bool
 	Title() string
+	// CanQuit returns false when the step wants to intercept quit signals
+	// (e.g. while an installation is running) and handle them itself.
+	CanQuit() bool
 }
 
 // AppModel is the root Bubble Tea model.
@@ -53,11 +56,22 @@ func (a *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
+		// Forward size to the current step so it can adapt its layout.
+		if !a.allDone && a.current < len(a.stepsList) {
+			updated, cmd := a.stepsList[a.current].Update(msg)
+			a.stepsList[a.current] = updated.(stepModel)
+			return a, cmd
+		}
 		return a, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
-			return a, tea.Quit
+			// Only quit immediately when the current step allows it.
+			// When CanQuit() is false the key is forwarded to the step so it
+			// can show its own confirmation (e.g. abort running installation).
+			if a.allDone || a.stepsList[a.current].CanQuit() {
+				return a, tea.Quit
+			}
 		}
 	}
 

@@ -839,7 +839,7 @@ func (m *ToolsModel) viewOpList() string {
 	for i, op := range m.pendingOps {
 		icon, nameStr := m.opStatusStrings(i, op)
 		actionStr := tuistyles.StatusStyle.Render("(" + opActionLabel(op.isUninstall) + ")")
-		sb.WriteString(fmt.Sprintf(" %s %s %s\n", icon, nameStr, actionStr))
+		fmt.Fprintf(&sb, " %s %s %s\n", icon, nameStr, actionStr)
 	}
 	return sb.String()
 }

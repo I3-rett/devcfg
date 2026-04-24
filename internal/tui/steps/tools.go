@@ -1,9 +1,11 @@
 package steps
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/I3-rett/devcfg/internal/executor"
@@ -14,20 +16,45 @@ import (
 )
 
 type installResultMsg struct {
-	name   string
-	output string
-	err    error
+	name string
+	err  error
 }
 
 type uninstallResultMsg struct {
-	name   string
-	output string
-	err    error
+	name string
+	err  error
 }
 
 type toolDetectMsg struct {
 	versions []string // one entry per tool; empty string means not installed
 }
+
+// logLineMsg carries one line of output from a running tool.
+type logLineMsg struct {
+	toolName string
+	line     string
+	ch       chan string // channel to re-read from (avoids stale-ref issues)
+}
+
+// logDoneMsg is sent when a tool's log channel is closed (command finished).
+type logDoneMsg struct {
+	toolName string
+}
+
+// pendingOp is one install or uninstall operation queued for execution.
+type pendingOp struct {
+	tool        registry.Tool
+	isUninstall bool
+}
+
+// logChannelBufSize is the number of log lines buffered per operation.
+// 1024 lines is large enough to absorb the typical burst output of package
+// managers (brew, apt-get, etc.) without blocking the scanner goroutine while
+// the Bubble Tea event loop catches up.
+const logChannelBufSize = 1024
+
+// logMaxLines is the maximum number of log lines shown in the right pane.
+const logMaxLines = 30
 
 // toolItem is one row in the tree-shaped display list.
 type toolItem struct {
@@ -140,17 +167,31 @@ type ToolsModel struct {
 	sysInfo      system.Info
 	done         bool
 	running      bool
-	operationCount int // total number of operations (installs + uninstalls)
 	results      []string
 	errors       []string
-	msgLines     []string
+
+	// Terminal dimensions (updated via tea.WindowSizeMsg).
+	width  int
+	height int
+
+	// Sequential installation state.
+	pendingOps  []pendingOp            // operations to execute in order
+	opIdx       int                    // index of the currently running op
+	opSuccess   []bool                 // per-op success flag (set on completion)
+	toolLogs    map[string][]string    // accumulated log lines per tool name
+	currentTool string                 // name of the tool currently being installed
+	cancelFn    context.CancelFunc     // cancels the in-progress operation
+
+	// Ctrl+C abort confirmation overlay (shown while running).
+	abortMode   bool
+	abortCursor int // 0 = "Yes, Abort"; 1 = "Continue"
 
 	// confirmation popup state
-	popupMode          bool     // removal confirmation popup is currently shown
-	popupToolDP        int      // display position of the tool awaiting confirmation
-	popupDeps          []string // names of INSTALLED checked tools that will also be uninstalled
+	popupMode           bool     // removal confirmation popup is currently shown
+	popupToolDP         int      // display position of the tool awaiting confirmation
+	popupDeps           []string // names of INSTALLED checked tools that will also be uninstalled
 	popupDeselectedDeps []string // names of checked-but-not-installed tools that will be deselected
-	popupCursor        int      // 0 = "Yes, Remove"; 1 = "Cancel"
+	popupCursor         int      // 0 = "Yes, Remove"; 1 = "Cancel"
 }
 
 // NewToolsModel initialises the model with the full tool registry.
@@ -173,6 +214,11 @@ func NewToolsModel(sysInfo system.Info) *ToolsModel {
 
 func (m *ToolsModel) Title() string { return "Tools Installation" }
 func (m *ToolsModel) IsDone() bool  { return m.done }
+
+// CanQuit returns false while an installation is running or the abort
+// confirmation is visible, so that Ctrl+C is handled by the model itself
+// rather than immediately killing the program.
+func (m *ToolsModel) CanQuit() bool { return !m.running && !m.abortMode }
 
 func (m *ToolsModel) Init() tea.Cmd {
 	tools := m.tools
@@ -315,34 +361,84 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.running {
+		// Abort confirmation overlay: handle keys before anything else.
+		if m.abortMode {
+			if keyMsg, ok := msg.(tea.KeyMsg); ok {
+				switch keyMsg.String() {
+				case "left", "h":
+					m.abortCursor = 0
+				case "right", "l":
+					m.abortCursor = 1
+				case " ", "enter":
+					if m.abortCursor == 0 {
+						// User confirmed abort: cancel the running command.
+						if m.cancelFn != nil {
+							m.cancelFn()
+						}
+						m.running = false
+						m.done = true
+						m.errors = append(m.errors, "⚠ Installation aborted by user")
+					}
+					m.abortMode = false
+				case "esc":
+					m.abortMode = false
+				}
+			}
+			return m, nil
+		}
+
 		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "ctrl+c", "q":
+				// Show abort confirmation instead of quitting immediately.
+				m.abortMode = true
+				m.abortCursor = 1 // default to "Continue" (safer)
+			}
+			return m, nil
+
+		case logLineMsg:
+			m.toolLogs[msg.toolName] = append(m.toolLogs[msg.toolName], msg.line)
+			// Re-issue the read command using the channel embedded in the message
+			// to avoid any stale-reference problem across sequential operations.
+			return m, waitForLog(msg.toolName, msg.ch)
+
+		case logDoneMsg:
+			// Log channel closed; the installResultMsg will arrive shortly via
+			// the separate error channel.  Nothing to do here.
+			return m, nil
+
 		case installResultMsg:
 			if msg.err != nil {
 				m.errors = append(m.errors, fmt.Sprintf("✗ %s: %s", msg.name, msg.err.Error()))
+				m.opSuccess[m.opIdx] = false
 			} else {
 				m.results = append(m.results, fmt.Sprintf("✓ %s installed", msg.name))
+				m.opSuccess[m.opIdx] = true
 			}
-			m.msgLines = append(m.msgLines, msg.output)
-			if len(m.results)+len(m.errors) >= m.operationCount {
-				m.running = false
-				m.done = true
-			}
+			m.opIdx++
+			return m, m.startNextOp()
+
 		case uninstallResultMsg:
 			if msg.err != nil {
 				m.errors = append(m.errors, fmt.Sprintf("✗ %s: %s", msg.name, msg.err.Error()))
+				m.opSuccess[m.opIdx] = false
 			} else {
 				m.results = append(m.results, fmt.Sprintf("✓ %s removed", msg.name))
+				m.opSuccess[m.opIdx] = true
 			}
-			m.msgLines = append(m.msgLines, msg.output)
-			if len(m.results)+len(m.errors) >= m.operationCount {
-				m.running = false
-				m.done = true
-			}
+			m.opIdx++
+			return m, m.startNextOp()
 		}
 		return m, nil
 	}
 
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+
 	case toolDetectMsg:
 		n := len(m.tools)
 		if len(msg.versions) < n {
@@ -421,61 +517,110 @@ func (m *ToolsModel) toggleOrConfirm(displayPos int) {
 }
 
 func (m *ToolsModel) startInstallation() tea.Cmd {
-	// Collect tools to uninstall in reverse display order (dependents before parents).
-	var toUninstallTools []registry.Tool
+	// Collect uninstalls in reverse display order (dependents before parents).
+	var ops []pendingOp
 	for i := len(m.displayOrder) - 1; i >= 0; i-- {
 		item := m.displayOrder[i]
 		if m.toUninstall[item.idx] {
-			toUninstallTools = append(toUninstallTools, m.tools[item.idx])
+			ops = append(ops, pendingOp{tool: m.tools[item.idx], isUninstall: true})
 		}
 	}
-
-	// Collect tools to install (checked but not yet installed) in display order
-	// so that dependencies are installed before their dependents.
-	var toInstallTools []registry.Tool
+	// Collect installs in display order (parents before dependents).
 	for dp, item := range m.displayOrder {
 		if m.checked[item.idx] && m.versions[item.idx] == "" && m.isAvailable(dp) {
-			toInstallTools = append(toInstallTools, m.tools[item.idx])
+			ops = append(ops, pendingOp{tool: m.tools[item.idx], isUninstall: false})
 		}
 	}
 
-	total := len(toUninstallTools) + len(toInstallTools)
-	if total == 0 {
+	if len(ops) == 0 {
 		m.done = true
 		return nil
 	}
-	m.running = true
-	m.operationCount = total
 
-	cmds := make([]tea.Cmd, 0, total)
-	for _, tool := range toUninstallTools {
-		t := tool
-		cmds = append(cmds, func() tea.Msg {
-			sysInfo := system.Detect()
-			args, err := resolver.ResolveUninstall(t, sysInfo)
-			if err != nil {
-				return uninstallResultMsg{name: t.Name, err: err}
-			}
-			res := executor.Execute(args)
-			return uninstallResultMsg{name: t.Name, output: res.Output, err: res.Err}
-		})
+	m.pendingOps = ops
+	m.opIdx = 0
+	m.opSuccess = make([]bool, len(ops))
+	m.toolLogs = make(map[string][]string)
+	m.running = true
+
+	return m.startNextOp()
+}
+
+// startNextOp launches the next pending operation and returns a tea.Batch of
+// the two commands that drive it: one to stream log lines and one to receive
+// the final result.  When all operations are done it marks the model as done.
+func (m *ToolsModel) startNextOp() tea.Cmd {
+	if m.opIdx >= len(m.pendingOps) {
+		m.running = false
+		m.done = true
+		return nil
 	}
-	for _, tool := range toInstallTools {
-		t := tool
-		cmds = append(cmds, func() tea.Msg {
-			// Re-detect the package manager at install time so that a dependency
-			// installed earlier in the sequence (e.g. brew) is visible to the
-			// resolver when processing subsequent tools.
-			sysInfo := system.Detect()
-			args, err := resolver.Resolve(t, sysInfo)
-			if err != nil {
-				return installResultMsg{name: t.Name, err: err}
-			}
-			res := executor.Execute(args)
-			return installResultMsg{name: t.Name, output: res.Output, err: res.Err}
-		})
+
+	op := m.pendingOps[m.opIdx]
+	m.currentTool = op.tool.Name
+
+	// Channel for streaming log lines (buffered to absorb bursts).
+	logCh := make(chan string, logChannelBufSize)
+	// Channel for the final error result.
+	errCh := make(chan error, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelFn = cancel
+
+	tool := op.tool
+	isUninstall := op.isUninstall
+
+	go func() {
+		sysInfo := system.Detect()
+		var args []string
+		var err error
+		if isUninstall {
+			args, err = resolver.ResolveUninstall(tool, sysInfo)
+		} else {
+			args, err = resolver.Resolve(tool, sysInfo)
+		}
+		if err != nil {
+			logCh <- "error: " + err.Error()
+			close(logCh)
+			errCh <- err
+			return
+		}
+		res := executor.ExecuteWithContext(ctx, args, logCh)
+		close(logCh)
+		errCh <- res.Err
+	}()
+
+	toolName := op.tool.Name
+	return tea.Batch(
+		waitForLog(toolName, logCh),
+		waitForDone(toolName, errCh, isUninstall),
+	)
+}
+
+// waitForLog blocks on one read from ch and returns the line as a logLineMsg
+// (or logDoneMsg when the channel is closed).  The channel is embedded in the
+// message so that the model can re-issue the command without holding a
+// reference that could be stale after the next operation starts.
+func waitForLog(toolName string, ch chan string) tea.Cmd {
+	return func() tea.Msg {
+		line, ok := <-ch
+		if !ok {
+			return logDoneMsg{toolName: toolName}
+		}
+		return logLineMsg{toolName: toolName, line: line, ch: ch}
 	}
-	return tea.Sequence(cmds...)
+}
+
+// waitForDone blocks until the error channel is written, then converts the
+// result into the appropriate Bubble Tea result message.
+func waitForDone(toolName string, errCh chan error, isUninstall bool) tea.Cmd {
+	return func() tea.Msg {
+		err := <-errCh
+		if isUninstall {
+			return uninstallResultMsg{name: toolName, err: err}
+		}
+		return installResultMsg{name: toolName, err: err}
+	}
 }
 
 func (m *ToolsModel) View() string {
@@ -486,14 +631,7 @@ func (m *ToolsModel) View() string {
 	}
 
 	if m.running {
-		sb.WriteString(tuistyles.StatusStyle.Render("Applying changes...") + "\n\n")
-		for _, r := range m.results {
-			sb.WriteString(tuistyles.SuccessStyle.Render(r) + "\n")
-		}
-		for _, e := range m.errors {
-			sb.WriteString(tuistyles.ErrorStyle.Render(e) + "\n")
-		}
-		return sb.String()
+		return m.viewRunning()
 	}
 
 	if m.done {
@@ -572,6 +710,116 @@ func (m *ToolsModel) View() string {
 	}
 	sb.WriteString(btnStyle.Render("  Continue  ") + "\n")
 
+	return sb.String()
+}
+
+// viewRunning renders the split-screen layout shown while operations execute.
+func (m *ToolsModel) viewRunning() string {
+	// Show abort confirmation overlay when the user pressed Ctrl+C.
+	if m.abortMode {
+		return m.viewAbortConfirm()
+	}
+
+	totalWidth := m.width
+	if totalWidth < 40 {
+		totalWidth = 80 // sensible fallback before the first WindowSizeMsg
+	}
+
+	// Divide available width between the two bordered panes.
+	// Each RoundedBorder adds 2 chars (left + right), so inner = rendered - 2.
+	innerTotal := totalWidth - 4 // 2 borders × 2 panes
+	if innerTotal < 4 {
+		innerTotal = 4
+	}
+	leftInner := innerTotal * 35 / 100
+	if leftInner < 20 {
+		leftInner = 20
+	}
+	rightInner := innerTotal - leftInner
+	if rightInner < 10 {
+		rightInner = 10
+	}
+
+	// ── Left pane: operation list ──────────────────────────────────────────
+	var leftSB strings.Builder
+	leftSB.WriteString(tuistyles.PaneTitleStyle.Render("Operations") + "\n")
+
+	for i, op := range m.pendingOps {
+		action := "install"
+		if op.isUninstall {
+			action = "remove"
+		}
+		actionStr := tuistyles.StatusStyle.Render("(" + action + ")")
+
+		var icon string
+		var nameStr string
+		switch {
+		case i < m.opIdx:
+			if m.opSuccess[i] {
+				icon = tuistyles.SuccessStyle.Render("✓")
+				nameStr = tuistyles.SuccessStyle.Render(op.tool.Name)
+			} else {
+				icon = tuistyles.ErrorStyle.Render("✗")
+				nameStr = tuistyles.ErrorStyle.Render(op.tool.Name)
+			}
+		case i == m.opIdx:
+			icon = tuistyles.WarningStyle.Render("▶")
+			nameStr = tuistyles.SelectedItemStyle.Render(op.tool.Name)
+		default:
+			icon = tuistyles.StatusStyle.Render("○")
+			nameStr = tuistyles.ItemStyle.Render(op.tool.Name)
+		}
+		leftSB.WriteString(fmt.Sprintf(" %s %s %s\n", icon, nameStr, actionStr))
+	}
+
+	leftPane := tuistyles.OpPaneBorderStyle.
+		Width(leftInner).
+		Render(leftSB.String())
+
+	// ── Right pane: live log output ────────────────────────────────────────
+	var rightSB strings.Builder
+	logTitle := "Logs"
+	if m.currentTool != "" {
+		logTitle = "Logs: " + m.currentTool
+	}
+	rightSB.WriteString(tuistyles.PaneTitleStyle.Render(logTitle) + "\n")
+
+	logs := m.toolLogs[m.currentTool]
+	// Cap at the last logMaxLines lines to keep the pane from growing unbounded.
+	if len(logs) > logMaxLines {
+		logs = logs[len(logs)-logMaxLines:]
+	}
+	if len(logs) == 0 {
+		rightSB.WriteString(tuistyles.StatusStyle.Render("Waiting for output...") + "\n")
+	} else {
+		for _, line := range logs {
+			rightSB.WriteString(tuistyles.StatusStyle.Render(line) + "\n")
+		}
+	}
+
+	rightPane := tuistyles.LogPaneBorderStyle.
+		Width(rightInner).
+		Render(rightSB.String())
+
+	result := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+	return result + "\n" + tuistyles.StatusStyle.Render("Ctrl+C: abort") + "\n"
+}
+
+// viewAbortConfirm renders the Ctrl+C abort confirmation overlay.
+func (m *ToolsModel) viewAbortConfirm() string {
+	var sb strings.Builder
+	sb.WriteString("\n")
+	sb.WriteString(tuistyles.WarningStyle.Render("⚠  Installation in progress. Abort?") + "\n\n")
+
+	yesStyle := tuistyles.ButtonStyle
+	noStyle := tuistyles.ButtonStyle
+	if m.abortCursor == 0 {
+		yesStyle = tuistyles.ActiveButtonStyle
+	} else {
+		noStyle = tuistyles.ActiveButtonStyle
+	}
+	sb.WriteString(yesStyle.Render("  Yes, Abort  ") + "  " + noStyle.Render("  Continue  ") + "\n\n")
+	sb.WriteString(tuistyles.StatusStyle.Render("←/→ or h/l: select  ENTER/SPACE: confirm  ESC: dismiss") + "\n")
 	return sb.String()
 }
 

@@ -40,8 +40,9 @@ func NewDockerModel() *DockerModel {
 	return &DockerModel{}
 }
 
-func (m *DockerModel) Title() string { return "Docker Setup" }
-func (m *DockerModel) IsDone() bool  { return m.done }
+func (m *DockerModel) Title() string  { return "Docker Setup" }
+func (m *DockerModel) IsDone() bool   { return m.done }
+func (m *DockerModel) CanQuit() bool  { return true }
 
 func (m *DockerModel) Init() tea.Cmd {
 	return m.checkDocker()

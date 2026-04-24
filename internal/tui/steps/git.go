@@ -37,8 +37,9 @@ func NewGitModel() *GitModel {
 	}
 }
 
-func (m *GitModel) Title() string { return "Git Configuration" }
-func (m *GitModel) IsDone() bool  { return m.done }
+func (m *GitModel) Title() string  { return "Git Configuration" }
+func (m *GitModel) IsDone() bool   { return m.done }
+func (m *GitModel) CanQuit() bool  { return true }
 
 func (m *GitModel) Init() tea.Cmd {
 	return textinput.Blink

@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags="-s -w" \
+            -o devcfg-${{ matrix.suffix }} .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: devcfg-${{ matrix.suffix }}
+          path: devcfg-${{ matrix.suffix }}
+
+  publish:
+    name: Publish GitHub Release
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
+          generate_release_notes: true

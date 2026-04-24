@@ -116,3 +116,51 @@ func assertArgs(t *testing.T, got, want []string) {
 		}
 	}
 }
+
+// ── ResolveUninstall ─────────────────────────────────────────────────────────
+
+func TestResolveUninstall_Brew(t *testing.T) {
+	tool := registry.Tool{Name: "neovim", Brew: "neovim", Apt: "neovim"}
+	sys := system.Info{OS: "macos", PackageManager: "brew"}
+
+	got, err := ResolveUninstall(tool, sys)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"brew", "uninstall", "neovim"}
+	assertArgs(t, got, want)
+}
+
+func TestResolveUninstall_Apt(t *testing.T) {
+	tool := registry.Tool{Name: "git", Brew: "git", Apt: "git"}
+	sys := system.Info{OS: "ubuntu", PackageManager: "apt"}
+
+	got, err := ResolveUninstall(tool, sys)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"sudo", "apt-get", "remove", "-y", "git"}
+	assertArgs(t, got, want)
+}
+
+func TestResolveUninstall_NoMethod(t *testing.T) {
+	tool := registry.Tool{Name: "mytool", Brew: "", Apt: "", Fallback: "install.sh"}
+	sys := system.Info{OS: "linux", PackageManager: "none"}
+
+	_, err := ResolveUninstall(tool, sys)
+	if err == nil {
+		t.Fatal("expected error when no uninstall method available, got nil")
+	}
+}
+
+func TestResolveUninstall_BrewWithFullFormula(t *testing.T) {
+	tool := registry.Tool{Name: "lazydocker", Brew: "jesseduffield/lazydocker/lazydocker"}
+	sys := system.Info{OS: "macos", PackageManager: "brew"}
+
+	got, err := ResolveUninstall(tool, sys)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"brew", "uninstall", "jesseduffield/lazydocker/lazydocker"}
+	assertArgs(t, got, want)
+}

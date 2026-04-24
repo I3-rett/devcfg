@@ -402,3 +402,448 @@ func TestToolsModel_View_ShowsTreeConnector(t *testing.T) {
 		t.Errorf("View() should contain tree connectors (├ or └), got:\n%s", view)
 	}
 }
+
+// ── uninstall feature ────────────────────────────────────────────────────────
+
+// newLoadedModelWithVersions returns a loaded model where the named tools are
+// treated as already installed (version = "v1.0").
+func newLoadedModelWithVersions(installedNames ...string) *ToolsModel {
+	m := NewToolsModel(system.Info{OS: "linux", PackageManager: "apt"})
+	nameSet := make(map[string]bool, len(installedNames))
+	for _, n := range installedNames {
+		nameSet[n] = true
+	}
+	versions := make([]string, len(m.tools))
+	for i, t := range m.tools {
+		if nameSet[t.Name] {
+			versions[i] = "v1.0"
+		}
+	}
+	updated, _ := m.Update(toolDetectMsg{versions: versions})
+	return updated.(*ToolsModel)
+}
+
+func TestApplyConfirmedRemoval_MarksForUninstall(t *testing.T) {
+	m := newLoadedModelWithVersions("git")
+
+	gitDP := -1
+	for dp, item := range m.displayOrder {
+		if m.tools[item.idx].Name == "git" {
+			gitDP = dp
+			break
+		}
+	}
+	if gitDP < 0 {
+		t.Skip("git not in registry")
+	}
+
+	if !m.checked[m.displayOrder[gitDP].idx] {
+		t.Fatal("git should be checked after detection as installed")
+	}
+
+	m.applyConfirmedRemoval(gitDP)
+
+	idx := m.displayOrder[gitDP].idx
+	if m.checked[idx] {
+		t.Error("git should be unchecked after applyConfirmedRemoval")
+	}
+	if !m.toUninstall[idx] {
+		t.Error("git should be marked toUninstall after applyConfirmedRemoval")
+	}
+}
+
+func TestApplyConfirmedRemoval_CascadesToInstalledDependents(t *testing.T) {
+	// brew and lazydocker are both "installed".
+	m := newLoadedModelWithVersions("brew", "lazydocker")
+
+	brewDP, lazyDP := -1, -1
+	for dp, item := range m.displayOrder {
+		switch m.tools[item.idx].Name {
+		case "brew":
+			brewDP = dp
+		case "lazydocker":
+			lazyDP = dp
+		}
+	}
+	if brewDP < 0 || lazyDP < 0 {
+		t.Skip("brew or lazydocker not in registry")
+	}
+
+	m.applyConfirmedRemoval(brewDP)
+
+	brewIdx := m.displayOrder[brewDP].idx
+	lazyIdx := m.displayOrder[lazyDP].idx
+
+	if !m.toUninstall[brewIdx] {
+		t.Error("brew should be marked toUninstall")
+	}
+	if !m.toUninstall[lazyIdx] {
+		t.Error("lazydocker should be marked toUninstall (installed dependent of brew)")
+	}
+	if m.checked[lazyIdx] {
+		t.Error("lazydocker should be unchecked")
+	}
+}
+
+func TestCheckedDependentsOf_ReturnsDepNames(t *testing.T) {
+	// brew is installed and checked; lazydocker is also checked.
+	m := newLoadedModelWithVersions("brew", "lazydocker")
+
+	brewIdx := -1
+	for i, t2 := range m.tools {
+		if t2.Name == "brew" {
+			brewIdx = i
+			break
+		}
+	}
+	if brewIdx < 0 {
+		t.Skip("brew not in registry")
+	}
+
+	deps := m.checkedDependentsOf(brewIdx)
+	found := false
+	for _, d := range deps {
+		if d == "lazydocker" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("checkedDependentsOf(brew) = %v; want to contain lazydocker", deps)
+	}
+}
+
+func TestCheckedDependentsOf_EmptyWhenNoDependents(t *testing.T) {
+	m := newLoadedModelWithVersions("git")
+
+	gitIdx := -1
+	for i, t2 := range m.tools {
+		if t2.Name == "git" {
+			gitIdx = i
+			break
+		}
+	}
+	if gitIdx < 0 {
+		t.Skip("git not in registry")
+	}
+
+	deps := m.checkedDependentsOf(gitIdx)
+	if len(deps) != 0 {
+		t.Errorf("checkedDependentsOf(git) = %v; want empty (no tools require git)", deps)
+	}
+}
+
+func TestSetChecked_ClearsToUninstall(t *testing.T) {
+	m := newLoadedModelWithVersions("git")
+
+	gitDP := -1
+	for dp, item := range m.displayOrder {
+		if m.tools[item.idx].Name == "git" {
+			gitDP = dp
+			break
+		}
+	}
+	if gitDP < 0 {
+		t.Skip("git not in registry")
+	}
+
+	// First confirm removal to set toUninstall.
+	m.applyConfirmedRemoval(gitDP)
+	idx := m.displayOrder[gitDP].idx
+	if !m.toUninstall[idx] {
+		t.Fatal("toUninstall should be true after applyConfirmedRemoval")
+	}
+
+	// Re-check — toUninstall should be cleared.
+	m.setChecked(gitDP, true)
+	if m.toUninstall[idx] {
+		t.Error("toUninstall should be false after re-checking the tool")
+	}
+	if !m.checked[idx] {
+		t.Error("checked should be true after setChecked(true)")
+	}
+}
+
+func TestToggleOrConfirm_OpensPopupForInstalledTool(t *testing.T) {
+	m := newLoadedModelWithVersions("git")
+
+	gitDP := -1
+	for dp, item := range m.displayOrder {
+		if m.tools[item.idx].Name == "git" {
+			gitDP = dp
+			break
+		}
+	}
+	if gitDP < 0 {
+		t.Skip("git not in registry")
+	}
+
+	m.cursor = gitDP
+	m.toggleOrConfirm(gitDP)
+
+	if !m.popupMode {
+		t.Error("popupMode should be true after toggleOrConfirm on an installed tool")
+	}
+	if m.popupToolDP != gitDP {
+		t.Errorf("popupToolDP = %d; want %d", m.popupToolDP, gitDP)
+	}
+}
+
+func TestToggleOrConfirm_DirectToggleForUncheckedTool(t *testing.T) {
+	// Nothing installed; toggle an unchecked tool directly (no popup).
+	m := newLoadedModelWithVersions()
+
+	// Find a root tool with no requires so it's available.
+	targetDP := -1
+	for dp, item := range m.displayOrder {
+		if len(m.tools[item.idx].Requires) == 0 {
+			targetDP = dp
+			break
+		}
+	}
+	if targetDP < 0 {
+		t.Skip("no root tool found in registry")
+	}
+
+	m.toggleOrConfirm(targetDP)
+
+	if m.popupMode {
+		t.Error("popupMode should not be set for a tool that is not installed")
+	}
+	if !m.checked[m.displayOrder[targetDP].idx] {
+		t.Error("tool should be checked after direct toggle")
+	}
+}
+
+func TestPopupMode_EscCancelsAndKeepsChecked(t *testing.T) {
+	m := newLoadedModelWithVersions("git")
+
+	gitDP := -1
+	for dp, item := range m.displayOrder {
+		if m.tools[item.idx].Name == "git" {
+			gitDP = dp
+			break
+		}
+	}
+	if gitDP < 0 {
+		t.Skip("git not in registry")
+	}
+
+	m.cursor = gitDP
+	m.toggleOrConfirm(gitDP)
+	if !m.popupMode {
+		t.Fatal("expected popupMode to be open")
+	}
+
+	// Press ESC — popup should close without changes.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(*ToolsModel)
+
+	if got.popupMode {
+		t.Error("popupMode should be false after ESC")
+	}
+	if !got.checked[got.displayOrder[gitDP].idx] {
+		t.Error("git should still be checked after ESC (removal cancelled)")
+	}
+}
+
+func TestView_ShowsPopupWhenInPopupMode(t *testing.T) {
+	m := newLoadedModelWithVersions("git")
+
+	gitDP := -1
+	for dp, item := range m.displayOrder {
+		if m.tools[item.idx].Name == "git" {
+			gitDP = dp
+			break
+		}
+	}
+	if gitDP < 0 {
+		t.Skip("git not in registry")
+	}
+
+	m.toggleOrConfirm(gitDP)
+	view := m.View()
+
+	if !strings.Contains(view, "Remove tool") {
+		t.Errorf("View() in popup mode should contain 'Remove tool', got:\n%s", view)
+	}
+	if !strings.Contains(view, "Yes, Remove") {
+		t.Errorf("View() in popup mode should contain 'Yes, Remove', got:\n%s", view)
+	}
+}
+
+func TestView_ShowsPendingRemovalBadge(t *testing.T) {
+	m := newLoadedModelWithVersions("git")
+
+	gitDP := -1
+	for dp, item := range m.displayOrder {
+		if m.tools[item.idx].Name == "git" {
+			gitDP = dp
+			break
+		}
+	}
+	if gitDP < 0 {
+		t.Skip("git not in registry")
+	}
+
+	m.applyConfirmedRemoval(gitDP)
+	view := m.View()
+
+	if !strings.Contains(view, "✗") {
+		t.Errorf("View() should show ✗ badge for tool pending removal, got:\n%s", view)
+	}
+}
+
+func TestIsAvailable_UnavailableWhenDepPendingUninstall(t *testing.T) {
+	// brew is installed, lazydocker is installed; confirm removal of brew.
+	// lazydocker should now be unavailable because its required tool is pending uninstall.
+	m := newLoadedModelWithVersions("brew", "lazydocker")
+
+	brewDP, lazyDP := -1, -1
+	for dp, item := range m.displayOrder {
+		switch m.tools[item.idx].Name {
+		case "brew":
+			brewDP = dp
+		case "lazydocker":
+			lazyDP = dp
+		}
+	}
+	if brewDP < 0 || lazyDP < 0 {
+		t.Skip("brew or lazydocker not in registry")
+	}
+
+	// Before removal: lazydocker should be available.
+	if !m.isAvailable(lazyDP) {
+		t.Fatal("lazydocker should be available before any removal")
+	}
+
+	// Mark brew for uninstall without the full applyConfirmedRemoval cascade.
+	brewIdx := m.displayOrder[brewDP].idx
+	m.toUninstall[brewIdx] = true
+	m.checked[brewIdx] = false
+
+	// Now lazydocker must be unavailable.
+	if m.isAvailable(lazyDP) {
+		t.Error("lazydocker should be unavailable when its dep (brew) is pending uninstall")
+	}
+}
+
+func TestIsAvailable_PreventsRecheckAfterDepRemoval(t *testing.T) {
+	// Confirm removal of brew, then lazydocker must not be selectable.
+	m := newLoadedModelWithVersions("brew", "lazydocker")
+
+	brewDP, lazyDP := -1, -1
+	for dp, item := range m.displayOrder {
+		switch m.tools[item.idx].Name {
+		case "brew":
+			brewDP = dp
+		case "lazydocker":
+			lazyDP = dp
+		}
+	}
+	if brewDP < 0 || lazyDP < 0 {
+		t.Skip("brew or lazydocker not in registry")
+	}
+
+	m.applyConfirmedRemoval(brewDP)
+
+	if m.isAvailable(lazyDP) {
+		t.Error("lazydocker should not be available after brew is confirmed for removal")
+	}
+}
+
+func TestToggleOrConfirm_SeparatesInstalledAndDeselectedDeps(t *testing.T) {
+	// brew is installed, lazydocker is installed, another tool that requires brew but is
+	// only selected (not installed yet) would go to deselectedDeps.
+	// For registry tools: brew=installed, lazydocker=installed.
+	// popupDeps should contain "lazydocker" (installed), popupDeselectedDeps should be empty.
+	m := newLoadedModelWithVersions("brew", "lazydocker")
+
+	brewDP := -1
+	for dp, item := range m.displayOrder {
+		if m.tools[item.idx].Name == "brew" {
+			brewDP = dp
+			break
+		}
+	}
+	if brewDP < 0 {
+		t.Skip("brew not in registry")
+	}
+
+	m.toggleOrConfirm(brewDP)
+	if !m.popupMode {
+		t.Fatal("popupMode should be open")
+	}
+
+	// lazydocker is installed → must be in popupDeps (will be uninstalled)
+	foundInstalled := false
+	for _, d := range m.popupDeps {
+		if d == "lazydocker" {
+			foundInstalled = true
+			break
+		}
+	}
+	if !foundInstalled {
+		t.Errorf("popupDeps = %v; want to contain lazydocker (installed)", m.popupDeps)
+	}
+
+	// lazydocker must NOT appear in popupDeselectedDeps
+	for _, d := range m.popupDeselectedDeps {
+		if d == "lazydocker" {
+			t.Errorf("popupDeselectedDeps = %v; should not contain lazydocker (it is installed)", m.popupDeselectedDeps)
+		}
+	}
+}
+
+func TestToggleOrConfirm_SelectedOnlyDepGoesToDeselectedList(t *testing.T) {
+	// brew installed, lazydocker only selected (version == "").
+	// popupDeps should be empty, popupDeselectedDeps should contain lazydocker.
+	m := newLoadedModelWithVersions("brew") // only brew is installed
+
+	// Manually check lazydocker (it becomes available once brew is installed/checked).
+	lazyDP := -1
+	brewDP := -1
+	for dp, item := range m.displayOrder {
+		switch m.tools[item.idx].Name {
+		case "lazydocker":
+			lazyDP = dp
+		case "brew":
+			brewDP = dp
+		}
+	}
+	if lazyDP < 0 || brewDP < 0 {
+		t.Skip("brew or lazydocker not in registry")
+	}
+
+	// lazydocker should now be available (brew installed) and unchecked; check it.
+	if !m.isAvailable(lazyDP) {
+		t.Fatal("lazydocker should be available once brew is installed")
+	}
+	m.setChecked(lazyDP, true)
+
+	// Open popup for brew removal.
+	m.toggleOrConfirm(brewDP)
+	if !m.popupMode {
+		t.Fatal("popupMode should be open")
+	}
+
+	// lazydocker is not installed → must be in popupDeselectedDeps
+	foundDeselected := false
+	for _, d := range m.popupDeselectedDeps {
+		if d == "lazydocker" {
+			foundDeselected = true
+			break
+		}
+	}
+	if !foundDeselected {
+		t.Errorf("popupDeselectedDeps = %v; want to contain lazydocker (selected but not installed)", m.popupDeselectedDeps)
+	}
+
+	// lazydocker must NOT appear in popupDeps
+	for _, d := range m.popupDeps {
+		if d == "lazydocker" {
+			t.Errorf("popupDeps = %v; should not contain lazydocker (it is not installed)", m.popupDeps)
+		}
+	}
+}
+

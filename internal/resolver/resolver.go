@@ -26,3 +26,18 @@ func Resolve(tool registry.Tool, sys system.Info) ([]string, error) {
 
 	return nil, errors.New("no installation method available for " + tool.Name + " on " + sys.OS)
 }
+
+// ResolveUninstall returns the command args to uninstall a tool based on the detected system.
+func ResolveUninstall(tool registry.Tool, sys system.Info) ([]string, error) {
+	switch sys.PackageManager {
+	case "brew":
+		if tool.Brew != "" {
+			return []string{"brew", "uninstall", tool.Brew}, nil
+		}
+	case "apt":
+		if tool.Apt != "" {
+			return []string{"sudo", "apt-get", "remove", "-y", tool.Apt}, nil
+		}
+	}
+	return nil, errors.New("no uninstall method available for " + tool.Name + " on " + sys.OS)
+}

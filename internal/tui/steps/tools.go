@@ -53,8 +53,9 @@ type pendingOp struct {
 // the Bubble Tea event loop catches up.
 const logChannelBufSize = 1024
 
-// logMaxLines is the maximum number of log lines shown in the right pane.
-const logMaxLines = 30
+// logMaxLines is the maximum number of log lines retained per tool.
+// Keeping a large history allows the user to scroll back through output.
+const logMaxLines = 500
 
 // toolItem is one row in the tree-shaped display list.
 type toolItem struct {
@@ -170,16 +171,18 @@ type ToolsModel struct {
 	results      []string
 	errors       []string
 
-	// Terminal width (updated via tea.WindowSizeMsg).
-	width int
+	// Terminal dimensions (updated via tea.WindowSizeMsg).
+	width  int
+	height int
 
 	// Sequential installation state.
-	pendingOps  []pendingOp            // operations to execute in order
-	opIdx       int                    // index of the currently running op
-	opSuccess   []bool                 // per-op success flag (set on completion)
-	toolLogs    map[string][]string    // accumulated log lines per tool name
-	currentTool string                 // name of the tool currently being installed
-	cancelFn    context.CancelFunc     // cancels the in-progress operation
+	pendingOps     []pendingOp            // operations to execute in order
+	opIdx          int                    // index of the currently running op
+	opSuccess      []bool                 // per-op success flag (set on completion)
+	toolLogs       map[string][]string    // accumulated log lines per tool name
+	currentTool    string                 // name of the tool currently being installed
+	cancelFn       context.CancelFunc     // cancels the in-progress operation
+	logScrollOffset int                   // lines scrolled up from the bottom (0 = follow tail)
 
 	// Ctrl+C abort confirmation overlay (shown while running).
 	abortMode   bool
@@ -389,6 +392,20 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg := msg.(type) {
 		case tea.WindowSizeMsg:
 			m.width = msg.Width
+			m.height = msg.Height
+			return m, nil
+
+		case tea.MouseMsg:
+			if msg.Action == tea.MouseActionPress {
+				switch msg.Button {
+				case tea.MouseButtonWheelUp:
+					m.logScrollOffset++
+				case tea.MouseButtonWheelDown:
+					if m.logScrollOffset > 0 {
+						m.logScrollOffset--
+					}
+				}
+			}
 			return m, nil
 
 		case tea.KeyMsg:
@@ -449,6 +466,7 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 		return m, nil
 
 	case toolDetectMsg:
@@ -570,6 +588,7 @@ func (m *ToolsModel) startNextOp() tea.Cmd {
 
 	op := m.pendingOps[m.opIdx]
 	m.currentTool = op.tool.Name
+	m.logScrollOffset = 0 // reset scroll to follow the new tool's output
 
 	// Channel for streaming log lines (buffered to absorb bursts).
 	logCh := make(chan string, logChannelBufSize)
@@ -797,12 +816,46 @@ func (m *ToolsModel) viewRunning() string {
 	rightSB.WriteString(tuistyles.PaneTitleStyle.Render(logTitle) + "\n")
 
 	logs := m.toolLogs[m.currentTool]
-	// toolLogs is already capped at logMaxLines per entry at append-time.
 	if len(logs) == 0 {
 		rightSB.WriteString(tuistyles.StatusStyle.Render("Waiting for output...") + "\n")
 	} else {
-		for _, line := range logs {
+		// Calculate how many lines fit in the pane (terminal height minus
+		// header/breadcrumb/footer/border overhead) with a sensible fallback.
+		visibleLines := m.height - 10
+		if visibleLines < 5 {
+			visibleLines = 5
+		}
+
+		// Cap the scroll offset so it never exceeds the scrollable range.
+		maxOffset := len(logs) - visibleLines
+		if maxOffset < 0 {
+			maxOffset = 0
+		}
+		offset := m.logScrollOffset
+		if offset > maxOffset {
+			offset = maxOffset
+		}
+
+		// Compute the slice to display (offset 0 = tail/newest).
+		start := len(logs) - visibleLines - offset
+		if start < 0 {
+			start = 0
+		}
+		end := start + visibleLines
+		if end > len(logs) {
+			end = len(logs)
+		}
+		visible := logs[start:end]
+
+		for _, line := range visible {
 			rightSB.WriteString(tuistyles.StatusStyle.Render(line) + "\n")
+		}
+
+		// Scroll indicator when the user has scrolled up.
+		if offset > 0 {
+			rightSB.WriteString(tuistyles.StatusStyle.Render(
+				fmt.Sprintf("↑ %d more line(s) below (scroll ↓ to follow)", offset),
+			) + "\n")
 		}
 	}
 
@@ -810,8 +863,12 @@ func (m *ToolsModel) viewRunning() string {
 		Width(rightInner).
 		Render(rightSB.String())
 
+	scrollHint := ""
+	if len(m.toolLogs[m.currentTool]) > 0 {
+		scrollHint = "  scroll: mouse wheel"
+	}
 	result := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
-	return result + "\n" + tuistyles.StatusStyle.Render("Ctrl+C: abort") + "\n"
+	return result + "\n" + tuistyles.StatusStyle.Render("Ctrl+C: abort"+scrollHint) + "\n"
 }
 
 // viewAbortConfirm renders the Ctrl+C abort confirmation overlay.

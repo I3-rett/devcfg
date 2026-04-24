@@ -12,5 +12,6 @@
   {"name":"ripgrep","description":"Fast grep replacement","binary":"rg","brew":"ripgrep","apt":"ripgrep","fallback":""},
   {"name":"fzf","description":"Fuzzy finder","binary":"fzf","brew":"fzf","apt":"fzf","fallback":""},
   {"name":"zsh","description":"Z shell","binary":"zsh","brew":"zsh","apt":"zsh","fallback":""},
-  {"name":"starship","description":"Cross-shell prompt","binary":"starship","brew":"starship","apt":"","fallback":""}
+  {"name":"starship","description":"Cross-shell prompt","binary":"starship","brew":"starship","apt":"","fallback":""},
+  {"name":"bat","description":"A cat clone with syntax highlighting","binary":"bat","brew":"bat","apt":"bat","fallback":""}
 ]

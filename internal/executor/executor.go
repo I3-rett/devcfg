@@ -45,6 +45,10 @@ func ExecuteWithContext(ctx context.Context, args []string, logCh chan<- string)
 	go func() {
 		defer close(scanDone)
 		scanner := bufio.NewScanner(pr)
+		// Set a 1 MiB per-line buffer so tools that emit very long lines
+		// (e.g. base64-encoded artifacts) don't cause Scan() to stop early
+		// and potentially leave unread data blocking cmd.Wait().
+		scanner.Buffer(make([]byte, 1<<20), 1<<20)
 		for scanner.Scan() {
 			line := scanner.Text()
 			buf.WriteString(line + "\n")
@@ -53,6 +57,18 @@ func ExecuteWithContext(ctx context.Context, args []string, logCh chan<- string)
 				// the channel buffer is full and the consumer is slow.
 				select {
 				case logCh <- line:
+				default:
+				}
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			// Surface read errors (e.g. a line that exceeds the buffer) as an
+			// inline log entry so they're visible and not silently swallowed.
+			errLine := "⚠ output read error: " + err.Error()
+			buf.WriteString(errLine + "\n")
+			if logCh != nil {
+				select {
+				case logCh <- errLine:
 				default:
 				}
 			}

@@ -170,9 +170,8 @@ type ToolsModel struct {
 	results      []string
 	errors       []string
 
-	// Terminal dimensions (updated via tea.WindowSizeMsg).
-	width  int
-	height int
+	// Terminal width (updated via tea.WindowSizeMsg).
+	width int
 
 	// Sequential installation state.
 	pendingOps  []pendingOp            // operations to execute in order
@@ -388,6 +387,10 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg := msg.(type) {
+		case tea.WindowSizeMsg:
+			m.width = msg.Width
+			return m, nil
+
 		case tea.KeyMsg:
 			switch msg.String() {
 			case "ctrl+c", "q":
@@ -398,7 +401,11 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case logLineMsg:
-			m.toolLogs[msg.toolName] = append(m.toolLogs[msg.toolName], msg.line)
+			logs := append(m.toolLogs[msg.toolName], msg.line)
+			if len(logs) > logMaxLines {
+				logs = logs[len(logs)-logMaxLines:]
+			}
+			m.toolLogs[msg.toolName] = logs
 			// Re-issue the read command using the channel embedded in the message
 			// to avoid any stale-reference problem across sequential operations.
 			return m, waitForLog(msg.toolName, msg.ch)
@@ -409,6 +416,9 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case installResultMsg:
+			if m.cancelFn != nil {
+				m.cancelFn() // release context resources on normal completion
+			}
 			if msg.err != nil {
 				m.errors = append(m.errors, fmt.Sprintf("✗ %s: %s", msg.name, msg.err.Error()))
 				m.opSuccess[m.opIdx] = false
@@ -420,6 +430,9 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startNextOp()
 
 		case uninstallResultMsg:
+			if m.cancelFn != nil {
+				m.cancelFn() // release context resources on normal completion
+			}
 			if msg.err != nil {
 				m.errors = append(m.errors, fmt.Sprintf("✗ %s: %s", msg.name, msg.err.Error()))
 				m.opSuccess[m.opIdx] = false
@@ -436,7 +449,6 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		m.height = msg.Height
 		return m, nil
 
 	case toolDetectMsg:
@@ -785,10 +797,7 @@ func (m *ToolsModel) viewRunning() string {
 	rightSB.WriteString(tuistyles.PaneTitleStyle.Render(logTitle) + "\n")
 
 	logs := m.toolLogs[m.currentTool]
-	// Cap at the last logMaxLines lines to keep the pane from growing unbounded.
-	if len(logs) > logMaxLines {
-		logs = logs[len(logs)-logMaxLines:]
-	}
+	// toolLogs is already capped at logMaxLines per entry at append-time.
 	if len(logs) == 0 {
 		rightSB.WriteString(tuistyles.StatusStyle.Render("Waiting for output...") + "\n")
 	} else {

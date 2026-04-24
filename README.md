@@ -160,6 +160,47 @@ go build -o devcfg .
 
 ---
 
+## 🧪 Testing
+
+### Guidelines
+
+Tests in this project follow standard Go conventions and are co-located with the packages they cover (`*_test.go` in the same directory).
+
+#### Principles
+
+- **Table-driven tests** — use `[]struct{ name, input, want }` slices and iterate with `t.Run(tc.name, ...)` to keep cases readable and easy to extend.
+- **No external test framework** — only the standard `testing` package. Helpers from `testing/iotest` or `os/exec` stubs where relevant.
+- **Isolation** — unit tests must not make real network calls or perform persistent filesystem mutations. Use `t.TempDir()` for temporary files, keep filesystem writes confined there, and restore env variables with `t.Setenv()`.
+- **One assertion per sub-test** — keep each `t.Run` focused; avoid asserting unrelated things together.
+- **Error paths covered** — every function that returns an `error` must have at least one test case that triggers the error branch.
+- **Deterministic** — tests must not rely on timing, random values, or test-execution order.
+
+#### Coverage targets
+
+| Package | Priority | Notes |
+|---------|----------|-------|
+| `internal/system` | High | Mock filesystem for `/etc/os-release`; mock `PATH` for binary detection |
+| `internal/registry` | High | Validate `List()` length + fields; `Find()` hit and miss |
+| `internal/resolver` | High | All package-manager × tool combinations; fallback; error case |
+| `internal/executor` | Medium | Real subprocess (`echo`); empty args; failing command |
+| `internal/tui` | Low | Pure View/Init smoke tests; no interactive input required |
+
+#### Running tests
+
+```bash
+# All packages
+go test ./...
+
+# With race detector (recommended in CI)
+go test -race ./...
+
+# With coverage report
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
+```
+
+---
+
 ## 🛠️ Dev Setup (Contributing)
 
 ### Prerequisites

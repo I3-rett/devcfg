@@ -35,7 +35,11 @@ func Detect() Info {
 }
 
 func detectLinuxDistro() string {
-	f, err := os.Open("/etc/os-release")
+	return detectLinuxDistroFromFile("/etc/os-release")
+}
+
+func detectLinuxDistroFromFile(path string) string {
+	f, err := os.Open(path)
 	if err != nil {
 		return "linux"
 	}
@@ -54,6 +58,9 @@ func detectLinuxDistro() string {
 			}
 			return "linux"
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "linux"
 	}
 	return "linux"
 }

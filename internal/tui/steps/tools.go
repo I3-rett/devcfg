@@ -65,6 +65,9 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// continueIdx is the index of the Continue button (one past the last tool).
+	continueIdx := len(m.tools)
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -73,15 +76,15 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			}
 		case "down", "j":
-			if m.cursor < len(m.tools) {
+			if m.cursor < continueIdx {
 				m.cursor++
 			}
 		case " ":
-			if m.cursor < len(m.tools) {
+			if m.cursor < continueIdx {
 				m.checked[m.cursor] = !m.checked[m.cursor]
 			}
 		case "enter":
-			if m.cursor < len(m.tools) {
+			if m.cursor < continueIdx {
 				m.checked[m.cursor] = !m.checked[m.cursor]
 			} else {
 				// Continue button

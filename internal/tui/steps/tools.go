@@ -140,7 +140,7 @@ type ToolsModel struct {
 	sysInfo      system.Info
 	done         bool
 	running      bool
-	installCount int // total number of operations (installs + uninstalls)
+	operationCount int // total number of operations (installs + uninstalls)
 	results      []string
 	errors       []string
 	msgLines     []string
@@ -331,7 +331,7 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.results = append(m.results, fmt.Sprintf("✓ %s installed", msg.name))
 			}
 			m.msgLines = append(m.msgLines, msg.output)
-			if len(m.results)+len(m.errors) >= m.installCount {
+			if len(m.results)+len(m.errors) >= m.operationCount {
 				m.running = false
 				m.done = true
 			}
@@ -342,7 +342,7 @@ func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.results = append(m.results, fmt.Sprintf("✓ %s removed", msg.name))
 			}
 			m.msgLines = append(m.msgLines, msg.output)
-			if len(m.results)+len(m.errors) >= m.installCount {
+			if len(m.results)+len(m.errors) >= m.operationCount {
 				m.running = false
 				m.done = true
 			}
@@ -443,7 +443,7 @@ func (m *ToolsModel) startInstallation() tea.Cmd {
 		return nil
 	}
 	m.running = true
-	m.installCount = total
+	m.operationCount = total
 
 	cmds := make([]tea.Cmd, 0, total)
 	for _, tool := range toUninstallTools {

@@ -76,7 +76,7 @@ func TestBinaryName(t *testing.T) {
 		tool Tool
 		want string
 	}{
-		{"binary set", Tool{Name: "nodejs", Binary: "node"}, "node"},
+		{"binary set", Tool{Name: "nvm", Binary: "nvm"}, "nvm"},
 		{"binary empty falls back to name", Tool{Name: "git", Binary: ""}, "git"},
 		{"binary same as name", Tool{Name: "curl", Binary: "curl"}, "curl"},
 	}
@@ -140,7 +140,7 @@ func TestBat_HasBinaryAliases(t *testing.T) {
 }
 
 func TestList_ContainsExpectedTools(t *testing.T) {
-	expected := []string{"brew", "git", "neovim", "docker", "lazydocker", "nodejs", "python3", "curl", "tmux", "htop", "ripgrep", "fzf", "zsh", "starship", "bat"}
+	expected := []string{"brew", "git", "neovim", "docker", "lazydocker", "nvm", "python3", "curl", "tmux", "htop", "ripgrep", "fzf", "zsh", "bat", "font-roboto-mono-nerd-font"}
 	index := make(map[string]bool, len(List()))
 	for _, tool := range List() {
 		index[tool.Name] = true

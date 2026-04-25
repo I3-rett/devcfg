@@ -4,7 +4,7 @@
   {"name":"neovim","description":"Hyperextensible text editor","binary":"nvim","brew":"neovim","apt":"neovim","fallback":""},
   {"name":"docker","description":"Container platform","binary":"docker","brew":"docker","apt":"docker.io","fallback":""},
   {"name":"lazydocker","description":"Docker TUI","binary":"lazydocker","brew":"jesseduffield/lazydocker/lazydocker","apt":"","fallback":"curl -fsSL https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_via_script.sh | bash","requires":["brew"]},
-  {"name":"nodejs","description":"JavaScript runtime","binary":"node","brew":"node","apt":"nodejs","fallback":""},
+  {"name":"nvm","description":"Node Version Manager","binary":"nvm","brew":"nvm","apt":"","fallback":"curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash"},
   {"name":"python3","description":"Python 3 interpreter","binary":"python3","brew":"python3","apt":"python3","fallback":""},
   {"name":"curl","description":"HTTP client","binary":"curl","brew":"curl","apt":"curl","fallback":""},
   {"name":"tmux","description":"Terminal multiplexer","binary":"tmux","brew":"tmux","apt":"tmux","fallback":""},
@@ -12,6 +12,6 @@
   {"name":"ripgrep","description":"Fast grep replacement","binary":"rg","brew":"ripgrep","apt":"ripgrep","fallback":""},
   {"name":"fzf","description":"Fuzzy finder","binary":"fzf","brew":"fzf","apt":"fzf","fallback":""},
   {"name":"zsh","description":"Z shell","binary":"zsh","brew":"zsh","apt":"zsh","fallback":""},
-  {"name":"starship","description":"Cross-shell prompt","binary":"starship","brew":"starship","apt":"","fallback":""},
-  {"name":"bat","description":"A cat clone with syntax highlighting","binary":"bat","binaryAliases":["bat","batcat"],"brew":"bat","apt":"bat","fallback":"", "requires":["brew"]}
+  {"name":"bat","description":"A cat clone with syntax highlighting","binary":"bat","binaryAliases":["bat","batcat"],"brew":"bat","apt":"bat","fallback":"", "requires":["brew"]},
+  {"name":"font-roboto-mono-nerd-font","description":"Roboto Mono Nerd Font","binary":"","brew":"font-roboto-mono-nerd-font","apt":"","fallback":"","requires":["brew"]}
 ]

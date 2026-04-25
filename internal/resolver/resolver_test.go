@@ -32,19 +32,19 @@ func TestResolve_Apt(t *testing.T) {
 }
 
 func TestResolve_Fallback(t *testing.T) {
-	tool := registry.Tool{Name: "starship", Brew: "", Apt: "", Fallback: "curl -sS https://starship.rs/install.sh | sh"}
+	tool := registry.Tool{Name: "nvm", Brew: "", Apt: "", Fallback: "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash"}
 	sys := system.Info{OS: "linux", PackageManager: "none"}
 
 	got, err := Resolve(tool, sys)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := []string{"sh", "-c", "curl -sS https://starship.rs/install.sh | sh"}
+	want := []string{"sh", "-c", "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash"}
 	assertArgs(t, got, want)
 }
 
 func TestResolve_FallbackWhenBrewPkgMissing(t *testing.T) {
-	tool := registry.Tool{Name: "starship", Brew: "", Apt: "", Fallback: "sh -c install.sh"}
+	tool := registry.Tool{Name: "nvm", Brew: "", Apt: "", Fallback: "sh -c install.sh"}
 	sys := system.Info{OS: "macos", PackageManager: "brew"}
 
 	got, err := Resolve(tool, sys)
@@ -56,7 +56,7 @@ func TestResolve_FallbackWhenBrewPkgMissing(t *testing.T) {
 }
 
 func TestResolve_FallbackWhenAptPkgMissing(t *testing.T) {
-	tool := registry.Tool{Name: "starship", Brew: "", Apt: "", Fallback: "sh -c install.sh"}
+	tool := registry.Tool{Name: "nvm", Brew: "", Apt: "", Fallback: "sh -c install.sh"}
 	sys := system.Info{OS: "ubuntu", PackageManager: "apt"}
 
 	got, err := Resolve(tool, sys)

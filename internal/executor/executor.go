@@ -101,13 +101,6 @@ func ExecuteWithContext(ctx context.Context, args []string, logCh chan<- string)
 	return Result{Output: buf.String(), Err: err}
 }
 
-// ExecuteWithPTY starts a command attached to a new pseudo-terminal so that
-// interactive programs (sudo, brew, etc.) can prompt for input naturally.
-// It returns the PTY master file (read for output, write for input), a channel
-// that receives the process exit error after all output has been forwarded to
-// logCh, and any startup error.  The caller must close ptm after the error
-// channel delivers a value.  logCh is closed by this function after all output
-// has been forwarded; the caller must not close it.
 // emitPendingLines processes the pending buffer, emitting each complete line
 // via emit. It returns the remaining bytes that do not yet form a full line.
 func emitPendingLines(pending []byte, emit func(string)) []byte {

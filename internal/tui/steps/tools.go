@@ -646,10 +646,7 @@ func (m *ToolsModel) updateScroll(msg tea.MouseMsg) {
 		return
 	}
 	logs := m.toolLogs[m.currentLogTool()]
-	visibleLines := m.height - 10
-	if visibleLines < 5 {
-		visibleLines = 5
-	}
+	visibleLines := m.computeVisibleLogLines()
 	maxOffset := len(logs) - visibleLines
 	if maxOffset < 0 {
 		maxOffset = 0
@@ -826,8 +823,11 @@ func (m *ToolsModel) viewSplit(logTool string) string {
 	}
 	leftInner, rightInner := computePaneWidths(totalWidth)
 
-	leftPane := tuistyles.OpPaneBorderStyle.Width(leftInner).Render(m.viewToolListPane())
-	rightPane := tuistyles.LogPaneBorderStyle.Width(rightInner).Render(m.viewLogPane(logTool))
+	// Calculate pane height to keep both panes aligned.
+	paneHeight := m.computePaneHeight()
+
+	leftPane := tuistyles.OpPaneBorderStyle.Width(leftInner).Height(paneHeight).Render(m.viewToolListPane())
+	rightPane := tuistyles.LogPaneBorderStyle.Width(rightInner).Height(paneHeight).Render(m.viewLogPane(logTool))
 
 	result := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 
@@ -932,10 +932,8 @@ func (m *ToolsModel) viewLogPane(toolName string) string {
 }
 
 func (m *ToolsModel) appendScrolledLogs(sb *strings.Builder, logs []string) {
-	visibleLines := m.height - 10
-	if visibleLines < 5 {
-		visibleLines = 5
-	}
+	visibleLines := m.computeVisibleLogLines()
+
 	maxOffset := len(logs) - visibleLines
 	if maxOffset < 0 {
 		maxOffset = 0
@@ -1012,4 +1010,26 @@ func computePaneWidths(totalWidth int) (leftInner, rightInner int) {
 		rightInner = 10
 	}
 	return
+}
+
+// computePaneHeight calculates the height for both panes in the split view.
+// This ensures both panes remain aligned regardless of content.
+func (m *ToolsModel) computePaneHeight() int {
+	// Account for: hint text (1-2 lines), final newline (1 line)
+	paneHeight := m.height - 3
+	if paneHeight < 10 {
+		paneHeight = 10
+	}
+	return paneHeight
+}
+
+// computeVisibleLogLines calculates how many log lines can fit in the log pane.
+// Content height = pane height - 4 (2 for borders, 1 for title, 1 for title margin).
+func (m *ToolsModel) computeVisibleLogLines() int {
+	paneHeight := m.computePaneHeight()
+	visibleLines := paneHeight - 4
+	if visibleLines < 5 {
+		visibleLines = 5
+	}
+	return visibleLines
 }

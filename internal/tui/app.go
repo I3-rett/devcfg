@@ -68,7 +68,6 @@ func newApp() *AppModel {
 		steps.NewToolsModel(sys),
 		steps.NewGitModel(),
 		steps.NewDockerModel(),
-		steps.NewShellModel(),
 	}
 	return &AppModel{
 		tabs:        tabs,

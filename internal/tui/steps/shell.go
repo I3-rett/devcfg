@@ -3,6 +3,8 @@ package steps
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -65,6 +67,9 @@ func (m *ShellModel) IsDone() bool { return m.done }
 
 // CanQuit always returns true for the Shell step.
 func (m *ShellModel) CanQuit() bool { return true }
+
+// CanSwitchTabs always returns true for the Shell step.
+func (m *ShellModel) CanSwitchTabs() bool { return true }
 
 // Init detects the current shell asynchronously.
 func (m *ShellModel) Init() tea.Cmd {
@@ -148,11 +153,11 @@ func (m *ShellModel) applyShellSetup() tea.Cmd {
 					newShell = zshPath
 				}
 			}
-			user := os.Getenv("USER")
-			if user == "" {
-				user = os.Getenv("LOGNAME")
+			u, err := user.Current()
+			if err != nil {
+				return shellApplyDoneMsg{err: fmt.Errorf("get current user: %w", err)}
 			}
-			res := executor.Execute([]string{"chsh", "-s", newShell, user})
+			res := executor.Execute([]string{"chsh", "-s", newShell, u.Username})
 			if res.Err != nil {
 				errs = append(errs, "chsh: "+res.Err.Error())
 			}
@@ -209,11 +214,11 @@ func rcFileFor(current string, selected shellOption) string {
 }
 
 func findShell(name string) string {
-	res := executor.Execute([]string{"which", name})
-	if res.Err == nil {
-		return strings.TrimSpace(res.Output)
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return ""
 	}
-	return ""
+	return path
 }
 
 // View renders the shell setup step.

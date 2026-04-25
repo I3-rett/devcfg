@@ -3,6 +3,7 @@ package steps
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +16,8 @@ import (
 	"github.com/I3-rett/devcfg/internal/tui/tuistyles"
 )
 
+// ── message types ────────────────────────────────────────────────────────────
+
 type installResultMsg struct {
 	name string
 	err  error
@@ -26,47 +29,65 @@ type uninstallResultMsg struct {
 }
 
 type toolDetectMsg struct {
-	versions []string // one entry per tool; empty string means not installed
+	versions []string
 }
 
-// logLineMsg carries one line of output from a running tool.
 type logLineMsg struct {
 	toolName string
 	line     string
-	ch       chan string // channel to re-read from (avoids stale-ref issues)
+	ch       chan string
 }
 
-// logDoneMsg is sent when a tool's log channel is closed (command finished).
 type logDoneMsg struct {
 	toolName string
 }
 
-// pendingOp is one install or uninstall operation queued for execution.
+// ptyStartedMsg is sent once the PTY is open and ready for the active op.
+type ptyStartedMsg struct {
+	toolName    string
+	isUninstall bool
+	ptm         *os.File
+	logCh       chan string
+	errCh       <-chan error
+}
+
+// ptyStartFailedMsg is sent when the command cannot be started.
+type ptyStartFailedMsg struct {
+	toolName string
+	err      error
+}
+
+// ── constants ────────────────────────────────────────────────────────────────
+
+const logChannelBufSize = 1024
+const logMaxLines = 500
+
+// ── helper types ─────────────────────────────────────────────────────────────
+
+// toolItem is one row in the tree-shaped display list.
+type toolItem struct {
+	idx             int
+	depth           int
+	isLast          bool
+	parentContinues []bool
+}
+
+// pendingOp is one install or uninstall operation.
 type pendingOp struct {
 	tool        registry.Tool
 	isUninstall bool
 }
 
-// logChannelBufSize is the number of log lines buffered per operation.
-// 1024 lines is large enough to absorb the typical burst output of package
-// managers (brew, apt-get, etc.) without blocking the scanner goroutine while
-// the Bubble Tea event loop catches up.
-const logChannelBufSize = 1024
-
-// logMaxLines is the maximum number of log lines retained per tool.
-// Keeping a large history allows the user to scroll back through output.
-const logMaxLines = 500
-
-// toolItem is one row in the tree-shaped display list.
-type toolItem struct {
-	idx             int    // index in ToolsModel.tools
-	depth           int    // 0 = root, 1 = first-level child, ...
-	isLast          bool   // last sibling at this depth level
-	parentContinues []bool // for each ancestor at depth >= 1, whether it had more siblings
+// opResult records the outcome of a completed operation.
+type opResult struct {
+	name        string
+	isUninstall bool
+	success     bool
+	err         error
 }
 
-// treePrefix builds the visual tree connector string for a toolItem.
-// depth=0 -> empty; depth=1 -> "├── " or "└── "; depth=2 -> "│   ├── " etc.
+// ── tree helpers ─────────────────────────────────────────────────────────────
+
 func treePrefix(item toolItem) string {
 	if item.depth == 0 {
 		return ""
@@ -87,10 +108,6 @@ func treePrefix(item toolItem) string {
 	return sb.String()
 }
 
-// buildDisplayOrder returns tools in tree order: each tool's dependents appear
-// directly below it, indented. Tools without requires (or whose requires are
-// not in the registry) are roots. A visited set guards against cycles and
-// duplicate entries so a malformed tools.json cannot cause infinite recursion.
 func buildDisplayOrder(tools []registry.Tool) []toolItem {
 	nameToIdx := make(map[string]int, len(tools))
 	for i, t := range tools {
@@ -137,8 +154,6 @@ func buildDisplayOrder(tools []registry.Tool) []toolItem {
 		children := childrenOf[tools[idx].Name]
 		for j, childIdx := range children {
 			childIsLast := j == len(children)-1
-			// parentContinues for depth-1 child: ancestors at depth>=1 only.
-			// A root (depth=0) does not contribute a continuation line.
 			var childParentCont []bool
 			if depth > 0 {
 				childParentCont = make([]bool, len(parentContinues)+1)
@@ -155,48 +170,50 @@ func buildDisplayOrder(tools []registry.Tool) []toolItem {
 	return order
 }
 
-// ToolsModel is the Bubble Tea model for the tool-selection step.
+// ── model ────────────────────────────────────────────────────────────────────
+
+// ToolsModel is the Bubble Tea model for the tool-installation tab.
 type ToolsModel struct {
 	tools        []registry.Tool
-	nameToIdx    map[string]int // tool name -> index in tools
-	displayOrder []toolItem     // tree-ordered display items
-	checked      []bool         // indexed by tool index
-	versions     []string       // indexed by tool index; empty = not installed
-	toUninstall  []bool         // indexed by tool index; installed tools confirmed for removal
-	loaded       bool
-	cursor       int // position in displayOrder (0 ... len(displayOrder) = Continue)
-	sysInfo      system.Info
-	done         bool
-	running      bool
-	results      []string
-	errors       []string
+	nameToIdx    map[string]int
+	displayOrder []toolItem
 
-	// Terminal dimensions (updated via tea.WindowSizeMsg).
-	width  int
-	height int
+	loaded   bool
+	cursor   int
+	versions []string // "" = not installed
 
-	// Sequential installation state.
-	pendingOps      []pendingOp         // operations to execute in order
-	opIdx           int                 // index of the currently running op
-	opSuccess       []bool              // per-op success flag (set on completion)
-	toolLogs        map[string][]string // accumulated log lines per tool name
-	currentTool     string              // name of the tool currently being installed
-	cancelFn        context.CancelFunc  // cancels the in-progress operation
-	logScrollOffset int                 // lines scrolled up from the bottom (0 = follow tail)
+	// Active operation (nil PTY = idle).
+	activeName        string
+	activeIsUninstall bool
+	activeCancel      context.CancelFunc
+	activePty         *os.File
 
-	// Ctrl+C abort confirmation overlay (shown while running).
-	abortMode   bool
-	abortCursor int // 0 = "Yes, Abort"; 1 = "Continue"
+	// Queued operations (run sequentially after active op).
+	opQueue []pendingOp
 
-	// confirmation popup state
-	popupMode           bool     // removal confirmation popup is currently shown
-	popupToolDP         int      // display position of the tool awaiting confirmation
-	popupDeps           []string // names of INSTALLED checked tools that will also be uninstalled
-	popupDeselectedDeps []string // names of checked-but-not-installed tools that will be deselected
-	popupCursor         int      // 0 = "Yes, Remove"; 1 = "Cancel"
+	// PTY interaction.
+	ptyFocused bool
+
+	// Log output per tool name.
+	toolLogs        map[string][]string
+	logScrollOffset int
+
+	// Completed op history.
+	completedOps []opResult
+
+	// Removal confirmation popup.
+	popupMode   bool
+	popupToolDP int
+	popupDeps   []string // installed tools that will also be uninstalled
+	popupCursor int      // 0 = "Yes, Remove", 1 = "Cancel"
+
+	sysInfo system.Info
+	width   int
+	height  int
 }
 
-// NewToolsModel initialises the model with the full tool registry.
+// NewToolsModel creates and returns a new ToolsModel initialised with the
+// tool registry and system information used to resolve install commands.
 func NewToolsModel(sysInfo system.Info) *ToolsModel {
 	tools := registry.List()
 	nameToIdx := make(map[string]int, len(tools))
@@ -207,23 +224,26 @@ func NewToolsModel(sysInfo system.Info) *ToolsModel {
 		tools:        tools,
 		nameToIdx:    nameToIdx,
 		displayOrder: buildDisplayOrder(tools),
-		checked:      make([]bool, len(tools)),
 		versions:     make([]string, len(tools)),
-		toUninstall:  make([]bool, len(tools)),
+		toolLogs:     make(map[string][]string),
 		sysInfo:      sysInfo,
 	}
 }
 
-// Title returns the display name of this step.
-func (m *ToolsModel) Title() string { return "Tools Installation" }
+// Title returns the display name of the Tools tab.
+func (m *ToolsModel) Title() string { return "Tools" }
 
-// IsDone reports whether the tool installation step has been completed.
-func (m *ToolsModel) IsDone() bool { return m.done }
+// IsDone reports whether the Tools tab has completed all its work.
+func (m *ToolsModel) IsDone() bool { return false }
 
-// CanQuit returns false while an installation is running or the abort
-// confirmation is visible, so that Ctrl+C is handled by the model itself
-// rather than immediately killing the program.
-func (m *ToolsModel) CanQuit() bool { return !m.running && !m.abortMode }
+// CanQuit returns false while the PTY is focused or work is in progress so
+// Ctrl+C is forwarded to the running process and in-flight operations can be
+// cancelled/cleaned up predictably by the model.
+func (m *ToolsModel) CanQuit() bool { return !m.ptyFocused && !m.isBusy() }
+
+// CanSwitchTabs returns false when a popup is open, the PTY is focused,
+// or install/uninstall work is still active or queued.
+func (m *ToolsModel) CanSwitchTabs() bool { return !m.popupMode && !m.ptyFocused && !m.isBusy() }
 
 // Init detects currently installed tool versions asynchronously.
 func (m *ToolsModel) Init() tea.Cmd {
@@ -242,9 +262,20 @@ func (m *ToolsModel) Init() tea.Cmd {
 	}
 }
 
-// isAvailable returns true when all tools listed in Requires for the item at
-// displayPos are either already installed (version detected) or checked, AND
-// none of those required tools are pending uninstallation.
+// ── availability & dependency helpers ────────────────────────────────────────
+
+// isInstalled reports whether the tool at toolIdx has a detected version.
+func (m *ToolsModel) isInstalled(toolIdx int) bool {
+	return m.versions[toolIdx] != ""
+}
+
+// isBusy reports whether any operation is currently active or queued.
+func (m *ToolsModel) isBusy() bool {
+	return m.activeName != "" || len(m.opQueue) > 0
+}
+
+// isAvailable reports whether all required tools for the item at displayPos
+// are currently installed.
 func (m *ToolsModel) isAvailable(displayPos int) bool {
 	tool := m.tools[m.displayOrder[displayPos].idx]
 	for _, req := range tool.Requires {
@@ -252,129 +283,249 @@ func (m *ToolsModel) isAvailable(displayPos int) bool {
 		if !ok {
 			continue
 		}
-		if m.toUninstall[reqIdx] || (m.versions[reqIdx] == "" && !m.checked[reqIdx]) {
+		if !m.isInstalled(reqIdx) {
 			return false
 		}
 	}
 	return true
 }
 
-// cascadeUncheck iteratively unchecks every checked tool that has become
-// unavailable. This propagates transitively through the dependency tree.
-func (m *ToolsModel) cascadeUncheck() {
-	changed := true
-	for changed {
-		changed = false
-		for dp, item := range m.displayOrder {
-			if m.checked[item.idx] && !m.isAvailable(dp) {
-				m.checked[item.idx] = false
-				changed = true
-			}
+// alreadyQueuedByIdx reports whether the tool at toolIdx is the active op or
+// is already present in the queue (as an install).
+func (m *ToolsModel) alreadyQueuedByIdx(toolIdx int) bool {
+	name := m.tools[toolIdx].Name
+	if m.activeName == name {
+		return true
+	}
+	for _, op := range m.opQueue {
+		if op.tool.Name == name && !op.isUninstall {
+			return true
 		}
 	}
+	return false
 }
 
-// setChecked updates the checked state for the tool at displayPos and
-// propagates auto-unchecks to any dependents that would become unavailable.
-// When re-checking a tool that was pending removal, the removal is cancelled.
-func (m *ToolsModel) setChecked(displayPos int, val bool) {
-	idx := m.displayOrder[displayPos].idx
-	m.checked[idx] = val
-	if val {
-		m.toUninstall[idx] = false // cancel any pending uninstall
+// collectInstallOrder returns the ops needed to install the tool at toolIdx,
+// including any missing dependencies in depth-first order.  Already-installed
+// and already-queued tools are skipped.
+func (m *ToolsModel) collectInstallOrder(toolIdx int, visited map[int]bool) []pendingOp {
+	if visited[toolIdx] {
+		return nil
 	}
-	if !val {
-		m.cascadeUncheck()
+	visited[toolIdx] = true
+
+	var ops []pendingOp
+	for _, req := range m.tools[toolIdx].Requires {
+		reqIdx, ok := m.nameToIdx[req]
+		if !ok {
+			continue
+		}
+		if m.isInstalled(reqIdx) || m.alreadyQueuedByIdx(reqIdx) {
+			continue
+		}
+		ops = append(ops, m.collectInstallOrder(reqIdx, visited)...)
 	}
+	if !m.isInstalled(toolIdx) && !m.alreadyQueuedByIdx(toolIdx) {
+		ops = append(ops, pendingOp{tool: m.tools[toolIdx], isUninstall: false})
+	}
+	return ops
 }
 
-// checkedDependentsOf returns the names of all currently-checked tools that
-// transitively depend on the tool at toolIdx.
-func (m *ToolsModel) checkedDependentsOf(toolIdx int) []string {
-	var names []string
-	visited := make(map[int]bool)
-	var walk func(idx int)
-	walk = func(idx int) {
-		name := m.tools[idx].Name
+// installedDependentsOf returns the names of installed tools that transitively
+// depend on the tool at toolIdx, ordered so the most-dependent tools come first
+// (safe uninstall order: dependents before the tool they depend on).
+func (m *ToolsModel) installedDependentsOf(toolIdx int) []string {
+	target := m.tools[toolIdx].Name
+	visited := make(map[string]bool)
+	var order []string
+
+	var visit func(name string)
+	visit = func(name string) {
+		if visited[name] {
+			return
+		}
+		visited[name] = true
+		// Find installed tools that directly depend on 'name' and recurse.
 		for i, t := range m.tools {
-			if visited[i] {
+			if !m.isInstalled(i) {
 				continue
 			}
 			for _, req := range t.Requires {
 				if req == name {
-					visited[i] = true
-					if m.checked[i] {
-						names = append(names, t.Name)
-					}
-					walk(i)
+					visit(t.Name)
 					break
 				}
 			}
 		}
+		if name != target {
+			order = append(order, name)
+		}
 	}
-	walk(toolIdx)
-	return names
+	visit(target)
+	return order
 }
 
-// applyConfirmedRemoval unchecks the tool at dp and any checked tools that
-// transitively depend on it, marking installed ones for uninstallation.
-func (m *ToolsModel) applyConfirmedRemoval(dp int) {
-	idx := m.displayOrder[dp].idx
-	m.checked[idx] = false
-	if m.versions[idx] != "" {
-		m.toUninstall[idx] = true
+// ── queue & op management ────────────────────────────────────────────────────
+
+// enqueueInstall queues the install of the tool at displayPos and all missing
+// deps, then starts the queue if idle.
+func (m *ToolsModel) enqueueInstall(dp int) tea.Cmd {
+	toolIdx := m.displayOrder[dp].idx
+	ops := m.collectInstallOrder(toolIdx, make(map[int]bool))
+	m.opQueue = append(m.opQueue, ops...)
+	if m.activeName == "" {
+		return m.startFromQueue()
 	}
-	// Cascade: uncheck dependents whose required tool is now pending removal.
-	// We use a stricter availability check that treats toUninstall deps as gone.
-	changed := true
-	for changed {
-		changed = false
-		for dp2, item2 := range m.displayOrder {
-			if !m.checked[item2.idx] {
-				continue
+	return nil
+}
+
+// enqueueUninstall queues the uninstall of the tool at displayPos (and
+// installed dependents) then starts the queue if idle.
+func (m *ToolsModel) enqueueUninstall(dp int) tea.Cmd {
+	toolIdx := m.displayOrder[dp].idx
+	// Uninstall dependents first (reverse dep order).
+	for _, depName := range m.installedDependentsOf(toolIdx) {
+		if depIdx, ok := m.nameToIdx[depName]; ok {
+			m.opQueue = append(m.opQueue, pendingOp{tool: m.tools[depIdx], isUninstall: true})
+		}
+	}
+	m.opQueue = append(m.opQueue, pendingOp{tool: m.tools[toolIdx], isUninstall: true})
+	if m.activeName == "" {
+		return m.startFromQueue()
+	}
+	return nil
+}
+
+// startFromQueue dequeues the next op and starts it.  Returns nil when the
+// queue is empty (all done).
+func (m *ToolsModel) startFromQueue() tea.Cmd {
+	if len(m.opQueue) == 0 {
+		return nil
+	}
+	op := m.opQueue[0]
+	m.opQueue = m.opQueue[1:]
+	return m.startOp(op)
+}
+
+// startOp launches the given op inside a PTY and returns the tea.Cmd that
+// kicks off the async start.
+func (m *ToolsModel) startOp(op pendingOp) tea.Cmd {
+	m.activeName = op.tool.Name
+	m.activeIsUninstall = op.isUninstall
+	m.logScrollOffset = 0
+
+	tool := op.tool
+	isUninstall := op.isUninstall
+	sysInfo := m.sysInfo
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.activeCancel = cancel
+
+	return func() tea.Msg {
+		var args []string
+		var err error
+		if isUninstall {
+			args, err = resolver.ResolveUninstall(tool, sysInfo)
+		} else {
+			args, err = resolver.Resolve(tool, sysInfo)
+		}
+		if err != nil {
+			return ptyStartFailedMsg{toolName: tool.Name, err: err}
+		}
+
+		logCh := make(chan string, logChannelBufSize)
+		ptm, errCh, startErr := executor.ExecuteWithPTY(ctx, args, logCh)
+		if startErr != nil {
+			// Fallback: pipe-based execution (no interactive input).
+			pipeLogCh := make(chan string, logChannelBufSize)
+			pipeErrCh := make(chan error, 1)
+			go func() {
+				res := executor.ExecuteWithContext(ctx, args, pipeLogCh)
+				close(pipeLogCh)
+				pipeErrCh <- res.Err
+			}()
+			return ptyStartedMsg{
+				toolName: tool.Name, isUninstall: isUninstall,
+				ptm: nil, logCh: pipeLogCh, errCh: pipeErrCh,
 			}
-			if m.hasRemovalPendingDep(dp2) {
-				m.checked[item2.idx] = false
-				if m.versions[item2.idx] != "" {
-					m.toUninstall[item2.idx] = true
-				}
-				changed = true
-			}
+		}
+		return ptyStartedMsg{
+			toolName: tool.Name, isUninstall: isUninstall,
+			ptm: ptm, logCh: logCh, errCh: errCh,
 		}
 	}
 }
 
-// hasRemovalPendingDep returns true when any requirement of the tool at
-// displayPos is either being removed (toUninstall) or no longer available.
-func (m *ToolsModel) hasRemovalPendingDep(displayPos int) bool {
-	return !m.isAvailable(displayPos)
+// handleOpDone records the result, updates the version map, and starts the
+// next queued op.
+func (m *ToolsModel) handleOpDone(name string, err error, isUninstall bool) tea.Cmd {
+	if m.activePty != nil {
+		_ = m.activePty.Close()
+		m.activePty = nil
+	}
+	if m.activeCancel != nil {
+		m.activeCancel()
+		m.activeCancel = nil
+	}
+	m.ptyFocused = false
+
+	m.completedOps = append(m.completedOps, opResult{
+		name:        name,
+		isUninstall: isUninstall,
+		success:     err == nil,
+		err:         err,
+	})
+
+	if err == nil {
+		// Re-detect version for the affected tool.
+		if idx, ok := m.nameToIdx[name]; ok {
+			if isUninstall {
+				m.versions[idx] = ""
+			} else {
+				// Quick re-probe; fall back to "(installed)" if version check fails.
+				tool := m.tools[idx]
+				for _, bin := range tool.BinaryNames() {
+					if ver := system.DetectToolVersion(bin); ver != "" {
+						m.versions[idx] = ver
+						break
+					}
+				}
+				if m.versions[idx] == "" {
+					m.versions[idx] = name + " (installed)"
+				}
+			}
+		}
+	}
+
+	m.activeName = ""
+	m.activeIsUninstall = false
+	return m.startFromQueue()
 }
 
-// Update handles messages for the tools installation step.
+// ── Update ───────────────────────────────────────────────────────────────────
+
+// Update dispatches incoming Bubble Tea messages to the appropriate handler.
 func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.popupMode {
-		return m.updatePopupMsg(msg)
+		return m.updatePopup(msg)
 	}
-	if m.running {
-		return m.updateRunningMsg(msg)
-	}
-	return m.updateSelectionMsg(msg)
+	return m.updateMain(msg)
 }
 
-// updatePopupMsg handles messages while the removal confirmation popup is open.
-func (m *ToolsModel) updatePopupMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
-	keyMsg, ok := msg.(tea.KeyMsg)
+func (m *ToolsModel) updatePopup(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
 	}
-	switch keyMsg.String() {
+	switch key.String() {
 	case "left", "h":
 		m.popupCursor = 0
 	case "right", "l":
 		m.popupCursor = 1
 	case " ", "enter":
 		if m.popupCursor == 0 {
-			m.applyConfirmedRemoval(m.popupToolDP)
+			m.popupMode = false
+			return m, m.enqueueUninstall(m.popupToolDP)
 		}
 		m.popupMode = false
 	case "esc":
@@ -383,64 +534,117 @@ func (m *ToolsModel) updatePopupMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateRunningMsg handles all messages received while an operation is in progress.
-func (m *ToolsModel) updateRunningMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.abortMode {
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			m.updateAbortKey(keyMsg.String())
-		}
-		return m, nil
-	}
+func (m *ToolsModel) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 	case tea.MouseMsg:
-		m.updateScrollOffset(msg)
+		m.handleMouseInput(msg)
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "q":
-			m.abortMode = true
-			m.abortCursor = 1 // default to "Continue" (safer)
-		}
+		return m, m.handleKeyInput(msg)
+	case toolDetectMsg:
+		m.handleToolDetect(msg)
+	case ptyStartedMsg:
+		m.activePty = msg.ptm
+		return m, tea.Batch(
+			waitForLog(msg.toolName, msg.logCh),
+			waitForDone(msg.toolName, msg.errCh, msg.isUninstall),
+		)
+	case ptyStartFailedMsg:
+		return m, m.handleOpDone(msg.toolName, msg.err, m.activeIsUninstall)
 	case logLineMsg:
 		return m, m.handleLogLine(msg)
+	case logDoneMsg:
+		// Channel closed; no re-subscription needed.
 	case installResultMsg:
-		return m, m.handleOpResult(msg.name, msg.err, true)
+		return m, m.handleOpDone(msg.name, msg.err, false)
 	case uninstallResultMsg:
-		return m, m.handleOpResult(msg.name, msg.err, false)
+		return m, m.handleOpDone(msg.name, msg.err, true)
 	}
 	return m, nil
 }
 
-// updateAbortKey processes a key press on the abort confirmation overlay.
-func (m *ToolsModel) updateAbortKey(key string) {
-	switch key {
-	case "left", "h":
-		m.abortCursor = 0
-	case "right", "l":
-		m.abortCursor = 1
-	case " ", "enter":
-		if m.abortCursor == 0 {
-			if m.cancelFn != nil {
-				m.cancelFn()
-			}
-			m.running = false
-			m.done = true
-			m.errors = append(m.errors, "⚠ Installation aborted by user")
+// handleMouseInput toggles PTY focus based on which pane was clicked and
+// updates the scroll offset for wheel events.
+func (m *ToolsModel) handleMouseInput(msg tea.MouseMsg) {
+	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && m.activePty != nil {
+		if msg.X >= m.leftPaneBoundary() {
+			m.ptyFocused = true
+		} else {
+			m.ptyFocused = false
 		}
-		m.abortMode = false
-	case "esc":
-		m.abortMode = false
 	}
+	m.updateScroll(msg)
 }
 
-// updateScrollOffset adjusts the log scroll position in response to mouse wheel events.
-func (m *ToolsModel) updateScrollOffset(msg tea.MouseMsg) {
+// handleKeyInput forwards keystrokes to the PTY when focused, or delegates to
+// the standard key handler otherwise.
+func (m *ToolsModel) handleKeyInput(msg tea.KeyMsg) tea.Cmd {
+	if m.ptyFocused && m.activePty != nil {
+		if b := keyToPTYBytes(msg); b != nil {
+			_, _ = m.activePty.Write(b)
+		}
+		// ESC unfocuses PTY so the user can navigate tabs again.
+		if msg.Type == tea.KeyEsc {
+			m.ptyFocused = false
+		}
+		return nil
+	}
+	return m.updateKey(msg.String())
+}
+
+// handleToolDetect stores the detected versions from a toolDetectMsg.
+func (m *ToolsModel) handleToolDetect(msg toolDetectMsg) {
+	n := len(m.tools)
+	if len(msg.versions) < n {
+		n = len(msg.versions)
+	}
+	for i := 0; i < n; i++ {
+		m.versions[i] = msg.versions[i]
+	}
+	m.loaded = true
+}
+
+func (m *ToolsModel) updateKey(key string) tea.Cmd {
+	if !m.loaded {
+		return nil
+	}
+	switch key {
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "down", "j":
+		if m.cursor < len(m.displayOrder)-1 {
+			m.cursor++
+		}
+	case " ", "enter":
+		if !m.loaded || m.isBusy() {
+			return nil
+		}
+		dp := m.cursor
+		toolIdx := m.displayOrder[dp].idx
+
+		if m.isInstalled(toolIdx) {
+			// Confirm before uninstalling.
+			m.popupDeps = m.installedDependentsOf(toolIdx)
+			m.popupToolDP = dp
+			m.popupCursor = 0
+			m.popupMode = true
+			return nil
+		}
+		// Install: auto-queue missing deps then the tool.
+		return m.enqueueInstall(dp)
+	}
+	return nil
+}
+
+func (m *ToolsModel) updateScroll(msg tea.MouseMsg) {
 	if msg.Action != tea.MouseActionPress {
 		return
 	}
-	logs := m.toolLogs[m.currentTool]
+	logs := m.toolLogs[m.currentLogTool()]
 	visibleLines := m.height - 10
 	if visibleLines < 5 {
 		visibleLines = 5
@@ -461,7 +665,6 @@ func (m *ToolsModel) updateScrollOffset(msg tea.MouseMsg) {
 	}
 }
 
-// handleLogLine appends one log line (capped at logMaxLines) and re-subscribes to the channel.
 func (m *ToolsModel) handleLogLine(msg logLineMsg) tea.Cmd {
 	logs := append(m.toolLogs[msg.toolName], msg.line)
 	if len(logs) > logMaxLines {
@@ -471,205 +674,8 @@ func (m *ToolsModel) handleLogLine(msg logLineMsg) tea.Cmd {
 	return waitForLog(msg.toolName, msg.ch)
 }
 
-// handleOpResult records a completed install or uninstall result and starts the next operation.
-func (m *ToolsModel) handleOpResult(name string, err error, isInstall bool) tea.Cmd {
-	if m.cancelFn != nil {
-		m.cancelFn() // release context resources on normal completion
-	}
-	if err != nil {
-		m.errors = append(m.errors, fmt.Sprintf("✗ %s: %s", name, err.Error()))
-		m.opSuccess[m.opIdx] = false
-	} else {
-		verb := "installed"
-		if !isInstall {
-			verb = "removed"
-		}
-		m.results = append(m.results, fmt.Sprintf("✓ %s %s", name, verb))
-		m.opSuccess[m.opIdx] = true
-	}
-	m.opIdx++
-	return m.startNextOp()
-}
+// ── channel helpers ───────────────────────────────────────────────────────────
 
-// updateSelectionMsg handles messages while the tool selection list is displayed.
-func (m *ToolsModel) updateSelectionMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		return m, nil
-	case toolDetectMsg:
-		m.applyToolDetect(msg)
-		return m, nil
-	}
-	if !m.loaded {
-		return m, nil
-	}
-	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		return m, m.updateSelectionKey(keyMsg.String())
-	}
-	return m, nil
-}
-
-// applyToolDetect stores detected versions, pre-checks installed tools, and
-// propagates dependency constraints.
-func (m *ToolsModel) applyToolDetect(msg toolDetectMsg) {
-	n := len(m.tools)
-	if len(msg.versions) < n {
-		n = len(msg.versions)
-	}
-	for i := 0; i < n; i++ {
-		m.versions[i] = msg.versions[i]
-		if msg.versions[i] != "" {
-			m.checked[i] = true
-		}
-	}
-	m.cascadeUncheck()
-	m.loaded = true
-}
-
-// updateSelectionKey handles keyboard navigation and selection in the tool list.
-func (m *ToolsModel) updateSelectionKey(key string) tea.Cmd {
-	continueIdx := len(m.displayOrder)
-	switch key {
-	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-		}
-	case "down", "j":
-		if m.cursor < continueIdx {
-			m.cursor++
-		}
-	case " ":
-		if m.cursor < continueIdx {
-			if m.isAvailable(m.cursor) {
-				m.toggleOrConfirm(m.cursor)
-			}
-		}
-	case "enter":
-		if m.cursor < continueIdx {
-			if m.isAvailable(m.cursor) {
-				m.toggleOrConfirm(m.cursor)
-			}
-		} else {
-			return m.startInstallation()
-		}
-	}
-	return nil
-}
-
-// toggleOrConfirm either directly toggles the checked state of the tool at
-// displayPos, or opens the removal confirmation popup when the tool is
-// currently checked and already installed.
-func (m *ToolsModel) toggleOrConfirm(displayPos int) {
-	idx := m.displayOrder[displayPos].idx
-	if m.checked[idx] && m.versions[idx] != "" {
-		// Tool is installed — ask before removing.
-		// Split dependents into installed (will be uninstalled) vs. selected-only (will be deselected).
-		var installedDeps, deselectedDeps []string
-		for _, name := range m.checkedDependentsOf(idx) {
-			if depIdx, ok := m.nameToIdx[name]; ok && m.versions[depIdx] != "" {
-				installedDeps = append(installedDeps, name)
-			} else {
-				deselectedDeps = append(deselectedDeps, name)
-			}
-		}
-		m.popupToolDP = displayPos
-		m.popupDeps = installedDeps
-		m.popupDeselectedDeps = deselectedDeps
-		m.popupCursor = 0
-		m.popupMode = true
-	} else {
-		m.setChecked(displayPos, !m.checked[idx])
-	}
-}
-
-func (m *ToolsModel) startInstallation() tea.Cmd {
-	// Collect uninstalls in reverse display order (dependents before parents).
-	var ops []pendingOp
-	for i := len(m.displayOrder) - 1; i >= 0; i-- {
-		item := m.displayOrder[i]
-		if m.toUninstall[item.idx] {
-			ops = append(ops, pendingOp{tool: m.tools[item.idx], isUninstall: true})
-		}
-	}
-	// Collect installs in display order (parents before dependents).
-	for dp, item := range m.displayOrder {
-		if m.checked[item.idx] && m.versions[item.idx] == "" && m.isAvailable(dp) {
-			ops = append(ops, pendingOp{tool: m.tools[item.idx], isUninstall: false})
-		}
-	}
-
-	if len(ops) == 0 {
-		m.done = true
-		return nil
-	}
-
-	m.pendingOps = ops
-	m.opIdx = 0
-	m.opSuccess = make([]bool, len(ops))
-	m.toolLogs = make(map[string][]string)
-	m.running = true
-
-	return m.startNextOp()
-}
-
-// startNextOp launches the next pending operation and returns a tea.Batch of
-// the two commands that drive it: one to stream log lines and one to receive
-// the final result.  When all operations are done it marks the model as done.
-func (m *ToolsModel) startNextOp() tea.Cmd {
-	if m.opIdx >= len(m.pendingOps) {
-		m.running = false
-		m.done = true
-		return nil
-	}
-
-	op := m.pendingOps[m.opIdx]
-	m.currentTool = op.tool.Name
-	m.logScrollOffset = 0 // reset scroll to follow the new tool's output
-
-	// Channel for streaming log lines (buffered to absorb bursts).
-	logCh := make(chan string, logChannelBufSize)
-	// Channel for the final error result.
-	errCh := make(chan error, 1)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cancelFn = cancel
-
-	tool := op.tool
-	isUninstall := op.isUninstall
-
-	go func() {
-		sysInfo := system.Detect()
-		var args []string
-		var err error
-		if isUninstall {
-			args, err = resolver.ResolveUninstall(tool, sysInfo)
-		} else {
-			args, err = resolver.Resolve(tool, sysInfo)
-		}
-		if err != nil {
-			logCh <- "error: " + err.Error()
-			close(logCh)
-			errCh <- err
-			return
-		}
-		res := executor.ExecuteWithContext(ctx, args, logCh)
-		close(logCh)
-		errCh <- res.Err
-	}()
-
-	toolName := op.tool.Name
-	return tea.Batch(
-		waitForLog(toolName, logCh),
-		waitForDone(toolName, errCh, isUninstall),
-	)
-}
-
-// waitForLog blocks on one read from ch and returns the line as a logLineMsg
-// (or logDoneMsg when the channel is closed).  The channel is embedded in the
-// message so that the model can re-issue the command without holding a
-// reference that could be stale after the next operation starts.
 func waitForLog(toolName string, ch chan string) tea.Cmd {
 	return func() tea.Msg {
 		line, ok := <-ch
@@ -680,9 +686,7 @@ func waitForLog(toolName string, ch chan string) tea.Cmd {
 	}
 }
 
-// waitForDone blocks until the error channel is written, then converts the
-// result into the appropriate Bubble Tea result message.
-func waitForDone(toolName string, errCh chan error, isUninstall bool) tea.Cmd {
+func waitForDone(toolName string, errCh <-chan error, isUninstall bool) tea.Cmd {
 	return func() tea.Msg {
 		err := <-errCh
 		if isUninstall {
@@ -692,190 +696,232 @@ func waitForDone(toolName string, errCh chan error, isUninstall bool) tea.Cmd {
 	}
 }
 
-// View renders the tools installation step.
+// ── PTY key forwarding ────────────────────────────────────────────────────────
+
+// keyToEscSeq maps cursor/navigation keys to their VT100 escape sequences.
+func keyToEscSeq(t tea.KeyType) []byte {
+	switch t {
+	case tea.KeyUp:
+		return []byte("\x1b[A")
+	case tea.KeyDown:
+		return []byte("\x1b[B")
+	case tea.KeyRight:
+		return []byte("\x1b[C")
+	case tea.KeyLeft:
+		return []byte("\x1b[D")
+	case tea.KeyHome:
+		return []byte("\x1b[H")
+	case tea.KeyEnd:
+		return []byte("\x1b[F")
+	case tea.KeyPgUp:
+		return []byte("\x1b[5~")
+	case tea.KeyPgDown:
+		return []byte("\x1b[6~")
+	case tea.KeyDelete:
+		return []byte("\x1b[3~")
+	}
+	return nil
+}
+
+func keyToPTYBytes(msg tea.KeyMsg) []byte {
+	switch msg.Type {
+	case tea.KeyRunes:
+		return []byte(string(msg.Runes))
+	case tea.KeyEnter:
+		return []byte("\r")
+	case tea.KeyBackspace:
+		return []byte("\x7f")
+	case tea.KeyTab:
+		return []byte("\t")
+	case tea.KeySpace:
+		return []byte(" ")
+	case tea.KeyCtrlC:
+		return []byte("\x03")
+	case tea.KeyCtrlD:
+		return []byte("\x04")
+	case tea.KeyCtrlZ:
+		return []byte("\x1a")
+	case tea.KeyEsc:
+		return []byte("\x1b")
+	}
+	return keyToEscSeq(msg.Type)
+}
+
+// ── View ──────────────────────────────────────────────────────────────────────
+
+// View renders the Tools tab content.
 func (m *ToolsModel) View() string {
 	if m.popupMode {
 		return m.viewPopup()
 	}
-	if m.running {
-		return m.viewRunning()
-	}
-	if m.done {
-		return m.viewDone()
-	}
 	if !m.loaded {
 		return tuistyles.StatusStyle.Render("Detecting installed tools...") + "\n"
 	}
-	return m.viewSelection()
+
+	logTool := m.currentLogTool()
+	if logTool != "" {
+		return m.viewSplit(logTool)
+	}
+	return m.viewList()
 }
 
-// viewDone renders the summary screen shown after all operations complete.
-func (m *ToolsModel) viewDone() string {
-	var sb strings.Builder
-	sb.WriteString(tuistyles.SuccessStyle.Render("Done!") + "\n\n")
-	for _, r := range m.results {
-		sb.WriteString(tuistyles.SuccessStyle.Render(r) + "\n")
+// currentLogTool returns the tool name whose logs should be shown, or "".
+func (m *ToolsModel) currentLogTool() string {
+	if m.activeName != "" {
+		return m.activeName
 	}
-	for _, e := range m.errors {
-		sb.WriteString(tuistyles.ErrorStyle.Render(e) + "\n")
+	if len(m.completedOps) > 0 {
+		return m.completedOps[len(m.completedOps)-1].name
 	}
-	return sb.String()
+	return ""
 }
 
-// viewSelection renders the interactive tool list with checkboxes and a Continue button.
-func (m *ToolsModel) viewSelection() string {
+// leftPaneBoundary returns the screen X offset where the right (log) pane starts.
+func (m *ToolsModel) leftPaneBoundary() int {
+	totalWidth := m.width
+	if totalWidth < 40 {
+		totalWidth = 80
+	}
+	leftInner, _ := computePaneWidths(totalWidth)
+	return leftInner + 2 // +2 for the rounded border
+}
+
+// viewList renders the full-width tool list (no active install).
+func (m *ToolsModel) viewList() string {
 	var sb strings.Builder
-	sb.WriteString(tuistyles.StatusStyle.Render("Select tools to install/remove (SPACE/ENTER to toggle):") + "\n\n")
+	busy := m.isBusy()
+	hint := "ENTER: install/uninstall  ↑/↓: navigate"
+	if busy {
+		hint = "↑/↓: navigate  (installation in progress)"
+	}
+	sb.WriteString(tuistyles.StatusStyle.Render(hint) + "\n\n")
+
 	for dp, item := range m.displayOrder {
-		sb.WriteString(m.viewToolRow(dp, item))
+		sb.WriteString(m.viewToolRow(dp, item, false))
 	}
-	sb.WriteString("\n")
-	btnStyle := tuistyles.ButtonStyle
-	if m.cursor == len(m.displayOrder) {
-		btnStyle = tuistyles.ActiveButtonStyle
+
+	if len(m.completedOps) > 0 {
+		sb.WriteString("\n")
+		for _, r := range m.completedOps {
+			if r.success {
+				verb := "installed"
+				if r.isUninstall {
+					verb = "removed"
+				}
+				sb.WriteString(tuistyles.SuccessStyle.Render(fmt.Sprintf("✓ %s %s", r.name, verb)) + "\n")
+			} else {
+				sb.WriteString(tuistyles.ErrorStyle.Render(fmt.Sprintf("✗ %s: %s", r.name, r.err)) + "\n")
+			}
+		}
 	}
-	sb.WriteString(btnStyle.Render("  Continue  ") + "\n")
 	return sb.String()
 }
 
-// viewToolRow renders one row of the tool selection list.
-func (m *ToolsModel) viewToolRow(dp int, item toolItem) string {
-	tool := m.tools[item.idx]
-	available := m.isAvailable(dp)
-	checked := m.checked[item.idx]
-	pendingRemoval := m.toUninstall[item.idx]
-
-	cursorStr := "  "
-	if m.cursor == dp {
-		cursorStr = tuistyles.SelectedItemStyle.Render("▶ ")
+// viewSplit renders the split-screen layout: tool list left, log pane right.
+func (m *ToolsModel) viewSplit(logTool string) string {
+	totalWidth := m.width
+	if totalWidth < 40 {
+		totalWidth = 80
 	}
+	leftInner, rightInner := computePaneWidths(totalWidth)
+
+	leftPane := tuistyles.OpPaneBorderStyle.Width(leftInner).Render(m.viewToolListPane())
+	rightPane := tuistyles.LogPaneBorderStyle.Width(rightInner).Render(m.viewLogPane(logTool))
+
+	result := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+
+	var hint string
+	if m.ptyFocused {
+		hint = "ESC: unfocus terminal   (typing goes to the process)"
+	} else if m.activePty != nil {
+		hint = "Click log pane to interact with the process"
+	}
+	if hint != "" {
+		result += "\n" + tuistyles.StatusStyle.Render(hint)
+	}
+	return result + "\n"
+}
+
+// viewToolListPane renders the tool list content for the left pane.
+func (m *ToolsModel) viewToolListPane() string {
+	var sb strings.Builder
+	sb.WriteString(tuistyles.PaneTitleStyle.Render("Tools") + "\n")
+	busy := m.isBusy()
+	for dp, item := range m.displayOrder {
+		sb.WriteString(m.viewToolRow(dp, item, busy))
+	}
+	return sb.String()
+}
+
+// viewToolRow renders one tool row.  When dimmed is true (install in progress)
+// tools are greyed and not interactive.
+func (m *ToolsModel) viewToolRow(dp int, item toolItem, dimmed bool) string {
+	toolIdx := item.idx
+	tool := m.tools[toolIdx]
+	installed := m.isInstalled(toolIdx)
+	isActive := m.activeName == tool.Name
+	isQueued := func() bool {
+		for _, op := range m.opQueue {
+			if op.tool.Name == tool.Name {
+				return true
+			}
+		}
+		return false
+	}()
 
 	prefix := treePrefix(item)
 	nameDesc := fmt.Sprintf("%-12s %s", tool.Name, tool.Description)
 
-	if !available {
-		hint := " [requires: " + strings.Join(tool.Requires, ", ") + "]"
-		return cursorStr + tuistyles.DisabledItemStyle.Render(prefix+"[  ] "+nameDesc+hint) + "\n"
+	// Status icon
+	var icon string
+	switch {
+	case isActive:
+		icon = tuistyles.WarningStyle.Render("[▶]")
+	case isQueued:
+		icon = tuistyles.StatusStyle.Render("[…]")
+	case installed:
+		icon = tuistyles.CheckedItemStyle.Render("[✓]")
+	default:
+		icon = "[ ]"
+	}
+
+	// Row styling
+	cursorStr := "  "
+	var rowStyle func(...string) string
+
+	if dimmed && !isActive {
+		rowStyle = tuistyles.DisabledItemStyle.Render
+	} else if m.cursor == dp && !dimmed {
+		cursorStr = tuistyles.SelectedItemStyle.Render("▶ ")
+		rowStyle = tuistyles.SelectedItemStyle.Render
+	} else if installed {
+		rowStyle = tuistyles.CheckedItemStyle.Render
+	} else {
+		rowStyle = tuistyles.ItemStyle.Render
 	}
 
 	versionStr := ""
-	if m.versions[item.idx] != "" {
-		versionStr = "  " + tuistyles.StatusStyle.Render(m.versions[item.idx])
+	if m.versions[toolIdx] != "" {
+		versionStr = "  " + tuistyles.StatusStyle.Render(m.versions[toolIdx])
 	}
-	rowContent := prefix + checkboxStr(checked, pendingRemoval) + " " +
-		m.rowRenderFn(dp, checked, pendingRemoval)(nameDesc) + versionStr
-	return cursorStr + rowContent + "\n"
+
+	return cursorStr + icon + " " + rowStyle(prefix+nameDesc) + versionStr + "\n"
 }
 
-// checkboxStr returns the styled checkbox string for the given selection state.
-func checkboxStr(checked, pendingRemoval bool) string {
-	switch {
-	case pendingRemoval:
-		return tuistyles.ErrorStyle.Render("[✗]")
-	case checked:
-		return tuistyles.CheckedItemStyle.Render("[✓]")
-	default:
-		return "[ ]"
-	}
-}
-
-// rowRenderFn returns the appropriate lipgloss render function for a tool row based on its state.
-func (m *ToolsModel) rowRenderFn(dp int, checked, pendingRemoval bool) func(...string) string {
-	switch {
-	case m.cursor == dp:
-		return tuistyles.SelectedItemStyle.Render
-	case pendingRemoval:
-		return tuistyles.ErrorStyle.Render
-	case checked:
-		return tuistyles.CheckedItemStyle.Render
-	default:
-		return tuistyles.ItemStyle.Render
-	}
-}
-
-// viewRunning renders the split-screen layout shown while operations execute.
-func (m *ToolsModel) viewRunning() string {
-	if m.abortMode {
-		return m.viewAbortConfirm()
-	}
-	totalWidth := m.width
-	if totalWidth < 40 {
-		totalWidth = 80 // sensible fallback before the first WindowSizeMsg
-	}
-	leftInner, rightInner := computePaneWidths(totalWidth)
-	leftPane := tuistyles.OpPaneBorderStyle.Width(leftInner).Render(m.viewOpList())
-	rightPane := tuistyles.LogPaneBorderStyle.Width(rightInner).Render(m.viewLogPane())
-	scrollHint := ""
-	if len(m.toolLogs[m.currentTool]) > 0 {
-		scrollHint = "  scroll: mouse wheel"
-	}
-	result := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
-	return result + "\n" + tuistyles.StatusStyle.Render("Ctrl+C: abort"+scrollHint) + "\n"
-}
-
-// computePaneWidths calculates the inner widths of the two split-screen panes
-// given the total terminal width.
-func computePaneWidths(totalWidth int) (leftInner, rightInner int) {
-	// Each RoundedBorder adds 2 chars (left + right), so inner = rendered - 2.
-	innerTotal := totalWidth - 4 // 2 borders × 2 panes
-	if innerTotal < 4 {
-		innerTotal = 4
-	}
-	leftInner = innerTotal * 35 / 100
-	if leftInner < 20 {
-		leftInner = 20
-	}
-	rightInner = innerTotal - leftInner
-	if rightInner < 10 {
-		rightInner = 10
-	}
-	return
-}
-
-// viewOpList renders the left pane: a list of pending operations with status icons.
-func (m *ToolsModel) viewOpList() string {
+// viewLogPane renders the right pane with PTY output.
+func (m *ToolsModel) viewLogPane(toolName string) string {
 	var sb strings.Builder
-	sb.WriteString(tuistyles.PaneTitleStyle.Render("Operations") + "\n")
-	for i, op := range m.pendingOps {
-		icon, nameStr := m.opStatusStrings(i, op)
-		actionStr := tuistyles.StatusStyle.Render("(" + opActionLabel(op.isUninstall) + ")")
-		fmt.Fprintf(&sb, " %s %s %s\n", icon, nameStr, actionStr)
-	}
-	return sb.String()
-}
 
-// opActionLabel returns the human-readable action label for an operation.
-func opActionLabel(isUninstall bool) string {
-	if isUninstall {
-		return "remove"
+	title := "Logs"
+	if toolName != "" {
+		title = "Logs: " + toolName
 	}
-	return "install"
-}
+	if m.ptyFocused {
+		title += "  [FOCUSED]"
+	}
+	sb.WriteString(tuistyles.PaneTitleStyle.Render(title) + "\n")
 
-// opStatusStrings returns the styled icon and tool name for the operation at index i.
-func (m *ToolsModel) opStatusStrings(i int, op pendingOp) (icon, nameStr string) {
-	switch {
-	case i < m.opIdx:
-		if m.opSuccess[i] {
-			return tuistyles.SuccessStyle.Render("✓"), tuistyles.SuccessStyle.Render(op.tool.Name)
-		}
-		return tuistyles.ErrorStyle.Render("✗"), tuistyles.ErrorStyle.Render(op.tool.Name)
-	case i == m.opIdx:
-		return tuistyles.WarningStyle.Render("▶"), tuistyles.SelectedItemStyle.Render(op.tool.Name)
-	default:
-		return tuistyles.StatusStyle.Render("○"), tuistyles.ItemStyle.Render(op.tool.Name)
-	}
-}
-
-// viewLogPane renders the right pane: live log output for the current tool.
-func (m *ToolsModel) viewLogPane() string {
-	var sb strings.Builder
-	logTitle := "Logs"
-	if m.currentTool != "" {
-		logTitle = "Logs: " + m.currentTool
-	}
-	sb.WriteString(tuistyles.PaneTitleStyle.Render(logTitle) + "\n")
-	logs := m.toolLogs[m.currentTool]
+	logs := m.toolLogs[toolName]
 	if len(logs) == 0 {
 		sb.WriteString(tuistyles.StatusStyle.Render("Waiting for output...") + "\n")
 	} else {
@@ -884,8 +930,6 @@ func (m *ToolsModel) viewLogPane() string {
 	return sb.String()
 }
 
-// appendScrolledLogs writes a windowed, scroll-adjusted slice of log lines into sb,
-// followed by a scroll indicator when the user has scrolled up from the tail.
 func (m *ToolsModel) appendScrolledLogs(sb *strings.Builder, logs []string) {
 	visibleLines := m.height - 10
 	if visibleLines < 5 {
@@ -917,24 +961,6 @@ func (m *ToolsModel) appendScrolledLogs(sb *strings.Builder, logs []string) {
 	}
 }
 
-// viewAbortConfirm renders the Ctrl+C abort confirmation overlay.
-func (m *ToolsModel) viewAbortConfirm() string {
-	var sb strings.Builder
-	sb.WriteString("\n")
-	sb.WriteString(tuistyles.WarningStyle.Render("⚠  Installation in progress. Abort?") + "\n\n")
-
-	yesStyle := tuistyles.ButtonStyle
-	noStyle := tuistyles.ButtonStyle
-	if m.abortCursor == 0 {
-		yesStyle = tuistyles.ActiveButtonStyle
-	} else {
-		noStyle = tuistyles.ActiveButtonStyle
-	}
-	sb.WriteString(yesStyle.Render("  Yes, Abort  ") + "  " + noStyle.Render("  Continue  ") + "\n\n")
-	sb.WriteString(tuistyles.StatusStyle.Render("←/→ or h/l: select  ENTER/SPACE: confirm  ESC: dismiss") + "\n")
-	return sb.String()
-}
-
 // viewPopup renders the removal confirmation popup.
 func (m *ToolsModel) viewPopup() string {
 	tool := m.tools[m.displayOrder[m.popupToolDP].idx]
@@ -946,16 +972,9 @@ func (m *ToolsModel) viewPopup() string {
 
 	if len(m.popupDeps) > 0 {
 		inner.WriteString("\n" + tuistyles.StatusStyle.Render(
-			"The following tools also require "+tool.Name+" and will be uninstalled:") + "\n")
+			"The following installed tools also require "+tool.Name+" and will be removed:") + "\n")
 		for _, dep := range m.popupDeps {
 			inner.WriteString(tuistyles.WarningStyle.Render("  • "+dep) + "\n")
-		}
-	}
-	if len(m.popupDeselectedDeps) > 0 {
-		inner.WriteString("\n" + tuistyles.StatusStyle.Render(
-			"The following selected tools also require "+tool.Name+" and will be deselected:") + "\n")
-		for _, dep := range m.popupDeselectedDeps {
-			inner.WriteString(tuistyles.StatusStyle.Render("  • "+dep) + "\n")
 		}
 	}
 
@@ -974,4 +993,22 @@ func (m *ToolsModel) viewPopup() string {
 	sb.WriteString(tuistyles.ConfirmStyle.Render(inner.String()) + "\n")
 	sb.WriteString("\n" + tuistyles.StatusStyle.Render("←/→: select  ENTER: confirm  ESC: cancel") + "\n")
 	return sb.String()
+}
+
+// ── pane layout ───────────────────────────────────────────────────────────────
+
+func computePaneWidths(totalWidth int) (leftInner, rightInner int) {
+	innerTotal := totalWidth - 4
+	if innerTotal < 4 {
+		innerTotal = 4
+	}
+	leftInner = innerTotal * 35 / 100
+	if leftInner < 20 {
+		leftInner = 20
+	}
+	rightInner = innerTotal - leftInner
+	if rightInner < 10 {
+		rightInner = 10
+	}
+	return
 }

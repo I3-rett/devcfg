@@ -17,6 +17,13 @@ func TestExecute_EmptyArgs(t *testing.T) {
 	}
 }
 
+func TestExecuteWithPTY_EmptyArgs_ReturnsError(t *testing.T) {
+	_, _, err := ExecuteWithPTY(context.Background(), []string{}, nil)
+	if err == nil {
+		t.Error("ExecuteWithPTY(empty) should return a non-nil error")
+	}
+}
+
 func TestExecute_Echo(t *testing.T) {
 	res := Execute([]string{"echo", "hello devcfg"})
 	if res.Err != nil {

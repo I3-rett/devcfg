@@ -4,32 +4,43 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 
-	"fmt"
-
 	"github.com/creack/pty"
 )
+
+// ansiSeqRe matches any ANSI/VT escape sequence in a string. It covers:
+//   - CSI sequences: ESC [ <param bytes> <final byte A-Z/a-z>
+//   - OSC sequences: ESC ] <text> BEL  or  ESC ] <text> ESC \
+//   - Other two-character Fe sequences: ESC <single non-bracket char>
+var ansiSeqRe = regexp.MustCompile(`\x1b(?:\[[0-9;]*[A-Za-z]|\][^\a]*(?:\a|\x1b\\)|[^[\]]?)`)
+
+// sgrRe matches only SGR (Select Graphic Rendition) sequences that carry
+// color/style information: ESC [ <params> m.
+var sgrRe = regexp.MustCompile(`^\x1b\[[0-9;]*m$`)
+
+// stripNonSGR removes all ANSI/VT escape sequences from s except SGR sequences
+// (i.e. color and text-style codes). This lets color output reach the TUI log
+// pane while preventing cursor-movement, clear-screen, OSC title/clipboard, and
+// other sequences that could corrupt the Bubble Tea layout.
+func stripNonSGR(s string) string {
+	return ansiSeqRe.ReplaceAllStringFunc(s, func(seq string) string {
+		if sgrRe.MatchString(seq) {
+			return seq
+		}
+		return ""
+	})
+}
 
 // Result holds the combined output and error of a command execution.
 type Result struct {
 	Output string
 	Err    error
-}
-
-// ansiEscape matches ANSI/VT100 escape sequences so they can be stripped from
-// PTY output before displaying in the log pane.
-var ansiEscape = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*\x07|[^[\]])`)
-
-// stripANSI removes ANSI/VT100 escape sequences and bare carriage returns from s.
-func stripANSI(s string) string {
-	s = ansiEscape.ReplaceAllString(s, "")
-	s = strings.ReplaceAll(s, "\r", "")
-	return s
 }
 
 // Execute runs a command and captures combined stdout+stderr.
@@ -138,7 +149,11 @@ func ExecuteWithPTY(ctx context.Context, args []string, logCh chan<- string) (pt
 	}
 
 	emit := func(s string) {
-		s = strings.TrimRight(stripANSI(s), " \t\r\n")
+		// Preserve only SGR color/style sequences; strip all other escape
+		// sequences (cursor movement, clear-screen, OSC, etc.) so they cannot
+		// corrupt the Bubble Tea layout.
+		s = stripNonSGR(strings.ReplaceAll(s, "\r", ""))
+		s = strings.TrimRight(s, " \t\r\n")
 		if s != "" && logCh != nil {
 			select {
 			case logCh <- s:

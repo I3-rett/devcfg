@@ -105,3 +105,48 @@ func TestExecuteWithContext_CancellationTerminatesProcess(t *testing.T) {
 		t.Fatal("ExecuteWithContext did not return within 5s after context cancellation")
 	}
 }
+
+func TestExecuteWithPTY_PreservesANSISequences(t *testing.T) {
+	// Test that ANSI color codes are preserved in the log channel.
+	// We use printf to emit a red-colored string: \x1b[31mRED\x1b[0m
+	logCh := make(chan string, 16)
+	ptm, errCh, err := ExecuteWithPTY(
+		context.Background(),
+		[]string{"sh", "-c", "printf '\\033[31mRED\\033[0m\\n'"},
+		logCh,
+	)
+	if err != nil {
+		t.Fatalf("ExecuteWithPTY failed to start: %v", err)
+	}
+	defer func() { _ = ptm.Close() }()
+
+	// Wait for the command to finish
+	cmdErr := <-errCh
+	if cmdErr != nil {
+		t.Fatalf("command failed: %v", cmdErr)
+	}
+
+	// Collect all log lines
+	var lines []string
+	for line := range logCh {
+		lines = append(lines, line)
+	}
+
+	// Verify we got at least one line
+	if len(lines) == 0 {
+		t.Fatal("expected at least one line from logCh, got none")
+	}
+
+	// Check that the ANSI sequence is preserved in the output
+	// The exact line should contain the escape sequences: \x1b[31m (red) and \x1b[0m (reset)
+	found := false
+	for _, line := range lines {
+		if strings.Contains(line, "\x1b[31m") && strings.Contains(line, "\x1b[0m") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("ANSI color codes not preserved in log output. Got lines: %q", lines)
+	}
+}

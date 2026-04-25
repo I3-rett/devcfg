@@ -607,3 +607,46 @@ func TestToolsModel_Running_LogLine_Appended(t *testing.T) {
 		t.Errorf("toolLogs[tool0] = %v; want [\"hello\"]", got.toolLogs["tool0"])
 	}
 }
+
+// ── pane height calculations ─────────────────────────────────────────────────
+
+func TestComputePaneHeight_RespectsMinimum(t *testing.T) {
+	m := NewToolsModel(system.Info{})
+	m.height = 5 // very small terminal
+	got := m.computePaneHeight()
+	if got < 10 {
+		t.Errorf("computePaneHeight() = %d; want minimum 10", got)
+	}
+}
+
+func TestComputePaneHeight_SubtractsUIElements(t *testing.T) {
+	m := NewToolsModel(system.Info{})
+	m.height = 50
+	got := m.computePaneHeight()
+	// Should subtract 3 for hint text and final newline
+	want := 47
+	if got != want {
+		t.Errorf("computePaneHeight() = %d; want %d", got, want)
+	}
+}
+
+func TestComputeVisibleLogLines_RespectsMinimum(t *testing.T) {
+	m := NewToolsModel(system.Info{})
+	m.height = 5 // very small terminal
+	got := m.computeVisibleLogLines()
+	if got < 5 {
+		t.Errorf("computeVisibleLogLines() = %d; want minimum 5", got)
+	}
+}
+
+func TestComputeVisibleLogLines_SubtractsBordersAndTitle(t *testing.T) {
+	m := NewToolsModel(system.Info{})
+	m.height = 50
+	got := m.computeVisibleLogLines()
+	// Pane height = 47 (50 - 3)
+	// Visible lines = 43 (47 - 4 for borders and title)
+	want := 43
+	if got != want {
+		t.Errorf("computeVisibleLogLines() = %d; want %d", got, want)
+	}
+}

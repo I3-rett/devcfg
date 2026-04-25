@@ -547,6 +547,7 @@ func (m *ToolsModel) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleToolDetect(msg)
 	case ptyStartedMsg:
 		m.activePty = msg.ptm
+		m.ptyFocused = true // Auto-focus logs pane when installation starts
 		return m, tea.Batch(
 			waitForLog(msg.toolName, msg.logCh),
 			waitForDone(msg.toolName, msg.errCh, msg.isUninstall),

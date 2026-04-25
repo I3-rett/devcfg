@@ -32,14 +32,14 @@ func TestResolve_Apt(t *testing.T) {
 }
 
 func TestResolve_Fallback(t *testing.T) {
-	tool := registry.Tool{Name: "nvm", Brew: "", Apt: "", Fallback: "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash"}
+	tool := registry.Tool{Name: "nvm", Brew: "", Apt: "", Fallback: "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash"}
 	sys := system.Info{OS: "linux", PackageManager: "none"}
 
 	got, err := Resolve(tool, sys)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := []string{"sh", "-c", "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash"}
+	want := []string{"sh", "-c", "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash"}
 	assertArgs(t, got, want)
 }
 

@@ -1,10 +1,13 @@
 package steps
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -40,6 +43,12 @@ type logLineMsg struct {
 type logDoneMsg struct {
 	toolName string
 }
+
+// sudoCheckMsg reports whether sudo credentials need to be cached interactively.
+type sudoCheckMsg struct{ needed bool }
+
+// sudoValidateMsg is sent after piping a password to sudo -S -v.
+type sudoValidateMsg struct{ err error }
 
 // pendingOp is one install or uninstall operation queued for execution.
 type pendingOp struct {
@@ -194,6 +203,11 @@ type ToolsModel struct {
 	popupDeps           []string // names of INSTALLED checked tools that will also be uninstalled
 	popupDeselectedDeps []string // names of checked-but-not-installed tools that will be deselected
 	popupCursor         int      // 0 = "Yes, Remove"; 1 = "Cancel"
+
+	primingSudo bool // waiting for sudo credential cache to be populated
+	sudoPrompt  bool             // password input overlay is visible
+	sudoInput   textinput.Model  // password field
+	sudoErr     string           // last auth error message
 }
 
 // NewToolsModel initialises the model with the full tool registry.
@@ -203,6 +217,11 @@ func NewToolsModel(sysInfo system.Info) *ToolsModel {
 	for i, t := range tools {
 		nameToIdx[t.Name] = i
 	}
+	ti := textinput.New()
+	ti.Placeholder = "password"
+	ti.EchoMode = textinput.EchoPassword
+	ti.EchoCharacter = '•'
+	ti.Width = 30
 	return &ToolsModel{
 		tools:        tools,
 		nameToIdx:    nameToIdx,
@@ -211,6 +230,7 @@ func NewToolsModel(sysInfo system.Info) *ToolsModel {
 		versions:     make([]string, len(tools)),
 		toUninstall:  make([]bool, len(tools)),
 		sysInfo:      sysInfo,
+		sudoInput:    ti,
 	}
 }
 
@@ -391,6 +411,9 @@ func (m *ToolsModel) updateRunningMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.sudoPrompt {
+		return m.updateSudoPrompt(msg)
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -403,6 +426,14 @@ func (m *ToolsModel) updateRunningMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.abortMode = true
 			m.abortCursor = 1 // default to "Continue" (safer)
 		}
+	case sudoCheckMsg:
+		if !msg.needed {
+			m.primingSudo = false
+			return m, m.startNextOp()
+		}
+		m.sudoPrompt = true
+		m.sudoInput.Focus()
+		return m, textinput.Blink
 	case logLineMsg:
 		return m, m.handleLogLine(msg)
 	case installResultMsg:
@@ -411,6 +442,50 @@ func (m *ToolsModel) updateRunningMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleOpResult(msg.name, msg.err, false)
 	}
 	return m, nil
+}
+
+// updateSudoPrompt handles input while the password prompt overlay is shown.
+func (m *ToolsModel) updateSudoPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case sudoValidateMsg:
+		if msg.err != nil {
+			m.sudoErr = "Wrong password, try again."
+			m.sudoInput.SetValue("")
+			return m, textinput.Blink
+		}
+		m.primingSudo = false
+		m.sudoPrompt = false
+		m.sudoErr = ""
+		return m, m.startNextOp()
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "enter":
+			pw := m.sudoInput.Value()
+			if pw == "" {
+				return m, nil
+			}
+			return m, validateSudoPassword(pw)
+		case "ctrl+c", "esc":
+			m.sudoPrompt = false
+			m.primingSudo = false
+			m.running = false
+			m.done = true
+			m.errors = append(m.errors, "⚠ Installation cancelled (sudo required)")
+			return m, nil
+		}
+	}
+	var cmd tea.Cmd
+	m.sudoInput, cmd = m.sudoInput.Update(msg)
+	return m, cmd
+}
+
+// validateSudoPassword pipes password to sudo -S -v to prime the credential cache.
+func validateSudoPassword(password string) tea.Cmd {
+	return func() tea.Msg {
+		cmd := exec.Command("sudo", "-S", "-v")
+		cmd.Stdin = bytes.NewBufferString(password + "\n")
+		return sudoValidateMsg{err: cmd.Run()}
+	}
 }
 
 // updateAbortKey processes a key press on the abort confirmation overlay.
@@ -611,7 +686,20 @@ func (m *ToolsModel) startInstallation() tea.Cmd {
 	m.toolLogs = make(map[string][]string)
 	m.running = true
 
+	if m.sysInfo.PackageManager == "apt" {
+		m.primingSudo = true
+		return checkSudoNeeded()
+	}
 	return m.startNextOp()
+}
+
+// checkSudoNeeded runs a non-interactive sudo check and reports whether the
+// credential cache needs to be populated before apt commands can run silently.
+func checkSudoNeeded() tea.Cmd {
+	return func() tea.Msg {
+		err := exec.Command("sudo", "-n", "true").Run()
+		return sudoCheckMsg{needed: err != nil}
+	}
 }
 
 // startNextOp launches the next pending operation and returns a tea.Batch of
@@ -793,10 +881,25 @@ func (m *ToolsModel) rowRenderFn(dp int, checked, pendingRemoval bool) func(...s
 	}
 }
 
+// viewSudoPrompt renders the password input overlay for sudo authentication.
+func (m *ToolsModel) viewSudoPrompt() string {
+	var sb strings.Builder
+	sb.WriteString(tuistyles.PaneTitleStyle.Render("sudo authentication required") + "\n\n")
+	sb.WriteString(tuistyles.StatusStyle.Render("Password: ") + m.sudoInput.View() + "\n")
+	if m.sudoErr != "" {
+		sb.WriteString("\n" + tuistyles.ErrorStyle.Render(m.sudoErr) + "\n")
+	}
+	sb.WriteString("\n" + tuistyles.StatusStyle.Render("ENTER: confirm   ESC: cancel") + "\n")
+	return sb.String()
+}
+
 // viewRunning renders the split-screen layout shown while operations execute.
 func (m *ToolsModel) viewRunning() string {
 	if m.abortMode {
 		return m.viewAbortConfirm()
+	}
+	if m.sudoPrompt {
+		return m.viewSudoPrompt()
 	}
 	totalWidth := m.width
 	if totalWidth < 40 {

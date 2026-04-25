@@ -5,13 +5,30 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"os/exec"
+	"regexp"
+	"strings"
+
+	"github.com/creack/pty"
 )
+
 
 // Result holds the combined output and error of a command execution.
 type Result struct {
 	Output string
 	Err    error
+}
+
+// ansiEscape matches ANSI/VT100 escape sequences so they can be stripped from
+// PTY output before displaying in the log pane.
+var ansiEscape = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*\x07|[^[\]])`)
+
+// stripANSI removes ANSI/VT100 escape sequences and bare carriage returns from s.
+func stripANSI(s string) string {
+	s = ansiEscape.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "\r", "")
+	return s
 }
 
 // Execute runs a command and captures combined stdout+stderr.
@@ -81,4 +98,73 @@ func ExecuteWithContext(ctx context.Context, args []string, logCh chan<- string)
 	<-scanDone     // wait for all lines to be forwarded before returning
 
 	return Result{Output: buf.String(), Err: err}
+}
+
+// ExecuteWithPTY starts a command attached to a new pseudo-terminal so that
+// interactive programs (sudo, brew, etc.) can prompt for input naturally.
+// It returns the PTY master file (read for output, write for input), a channel
+// that receives the process exit error after all output has been forwarded to
+// logCh, and any startup error.  The caller must close ptm after the error
+// channel delivers a value.  logCh is closed by this function after all output
+// has been forwarded; the caller must not close it.
+func ExecuteWithPTY(ctx context.Context, args []string, logCh chan<- string) (ptm *os.File, errCh <-chan error, err error) {
+	if len(args) == 0 {
+		return nil, nil, nil
+	}
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec
+	ptm, err = pty.Start(cmd)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	emit := func(s string) {
+		s = strings.TrimRight(stripANSI(s), " \t\r\n")
+		if s != "" && logCh != nil {
+			select {
+			case logCh <- s:
+			default:
+			}
+		}
+	}
+
+	ch := make(chan error, 1)
+	go func() {
+		readBuf := make([]byte, 4096)
+		var pending []byte
+		for {
+			n, readErr := ptm.Read(readBuf)
+			if n > 0 {
+				pending = append(pending, readBuf[:n]...)
+				// Emit complete lines terminated by \r\n, \r, or \n.
+				for {
+					idx := bytes.IndexAny(pending, "\r\n")
+					if idx < 0 {
+						break
+					}
+					emit(string(pending[:idx]))
+					next := idx + 1
+					if pending[idx] == '\r' && next < len(pending) && pending[next] == '\n' {
+						next++
+					}
+					pending = pending[next:]
+				}
+				// Emit partial content immediately (e.g. "Password: " prompts).
+				if len(pending) > 0 {
+					emit(string(pending))
+					pending = pending[:0]
+				}
+			}
+			if readErr != nil {
+				if len(pending) > 0 {
+					emit(string(pending))
+				}
+				ch <- cmd.Wait()
+				if logCh != nil {
+					close(logCh)
+				}
+				return
+			}
+		}
+	}()
+	return ptm, ch, nil
 }

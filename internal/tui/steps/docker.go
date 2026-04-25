@@ -1,9 +1,11 @@
 package steps
 
 import (
+	"context"
 	"fmt"
-	"os"
+	"os/user"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -51,6 +53,9 @@ func (m *DockerModel) IsDone() bool { return m.done }
 // CanQuit always returns true for the Docker step.
 func (m *DockerModel) CanQuit() bool { return true }
 
+// CanSwitchTabs always returns true for the Docker step.
+func (m *DockerModel) CanSwitchTabs() bool { return true }
+
 // Init triggers the initial Docker status check.
 func (m *DockerModel) Init() tea.Cmd {
 	return m.checkDocker()
@@ -60,32 +65,30 @@ func (m *DockerModel) checkDocker() tea.Cmd {
 	return func() tea.Msg {
 		var s dockerStatus
 
-		// Check if docker is installed
-		res := executor.Execute([]string{"docker", "--version"})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		res := executor.ExecuteWithContext(ctx, []string{"docker", "--version"}, nil)
 		if res.Err == nil {
 			s.installed = true
 			s.version = strings.TrimSpace(res.Output)
 		}
 
 		if s.installed {
-			// Check if user is in docker group
-			user := os.Getenv("USER")
-			if user == "" {
-				user = os.Getenv("LOGNAME")
-			}
-			groupRes := executor.Execute([]string{"id", "-nG", user})
-			if groupRes.Err == nil {
-				groups := strings.Fields(groupRes.Output)
-				for _, g := range groups {
-					if g == "docker" {
-						s.inGroup = true
-						break
+			u, err := user.Current()
+			if err == nil {
+				groupRes := executor.ExecuteWithContext(ctx, []string{"id", "-nG", u.Username}, nil)
+				if groupRes.Err == nil {
+					for _, g := range strings.Fields(groupRes.Output) {
+						if g == "docker" {
+							s.inGroup = true
+							break
+						}
 					}
 				}
 			}
 
-			// Check daemon status
-			daemonRes := executor.Execute([]string{"systemctl", "is-active", "docker"})
+			daemonRes := executor.ExecuteWithContext(ctx, []string{"systemctl", "is-active", "docker"}, nil)
 			s.daemonActive = strings.TrimSpace(daemonRes.Output) == "active"
 		}
 
@@ -133,12 +136,12 @@ func (m *DockerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *DockerModel) addToDockerGroup() tea.Cmd {
-	user := os.Getenv("USER")
-	if user == "" {
-		user = os.Getenv("LOGNAME")
-	}
 	return func() tea.Msg {
-		res := executor.Execute([]string{"sudo", "usermod", "-aG", "docker", user})
+		u, err := user.Current()
+		if err != nil {
+			return dockerActionDoneMsg{err: fmt.Errorf("get current user: %w", err)}
+		}
+		res := executor.Execute([]string{"sudo", "usermod", "-aG", "docker", u.Username})
 		return dockerActionDoneMsg{output: res.Output, err: res.Err}
 	}
 }

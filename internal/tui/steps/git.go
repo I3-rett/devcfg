@@ -48,14 +48,35 @@ func (m *GitModel) IsDone() bool { return m.done }
 // CanQuit always returns true for the Git step.
 func (m *GitModel) CanQuit() bool { return true }
 
-// Init starts cursor blinking for text inputs.
+// CanSwitchTabs always returns true — left/right cursor movement in text inputs
+// yields to tab navigation; fields are short enough that this is acceptable.
+func (m *GitModel) CanSwitchTabs() bool { return true }
+
+type gitInitMsg struct {
+	name  string
+	email string
+	gpg   bool
+}
+
+// Init reads existing git config and starts cursor blinking.
 func (m *GitModel) Init() tea.Cmd {
-	return textinput.Blink
+	return tea.Batch(textinput.Blink, func() tea.Msg {
+		name := strings.TrimSpace(executor.Execute([]string{"git", "config", "--global", "user.name"}).Output)
+		email := strings.TrimSpace(executor.Execute([]string{"git", "config", "--global", "user.email"}).Output)
+		gpgRaw := strings.TrimSpace(executor.Execute([]string{"git", "config", "--global", "commit.gpgsign"}).Output)
+		return gitInitMsg{name: name, email: email, gpg: gpgRaw == "true"}
+	})
 }
 
 // Update handles messages for the Git configuration step.
 func (m *GitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case gitInitMsg:
+		m.nameInput.SetValue(msg.name)
+		m.emailInput.SetValue(msg.email)
+		m.gpgSigning = msg.gpg
+		return m, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "tab", "down":
@@ -79,6 +100,7 @@ func (m *GitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.updateFocus()
 			}
 		}
+
 	case gitConfigDoneMsg:
 		m.status = msg.status
 		m.statusErr = msg.err != nil
@@ -98,16 +120,13 @@ func (m *GitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *GitModel) updateFocus() tea.Cmd {
-	if m.focusIdx == 0 {
+	m.nameInput.Blur()
+	m.emailInput.Blur()
+	switch m.focusIdx {
+	case 0:
 		m.nameInput.Focus()
-		m.emailInput.Blur()
-	} else {
-		m.nameInput.Blur()
-		if m.focusIdx == 1 {
-			m.emailInput.Focus()
-		} else {
-			m.emailInput.Blur()
-		}
+	case 1:
+		m.emailInput.Focus()
 	}
 	return textinput.Blink
 }

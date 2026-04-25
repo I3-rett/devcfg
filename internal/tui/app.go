@@ -1,11 +1,10 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/I3-rett/devcfg/internal/system"
 	"github.com/I3-rett/devcfg/internal/tui/steps"
@@ -89,69 +88,85 @@ func (a *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
-		// Forward to all tabs so layout adapts even for non-active ones.
-		var cmds []tea.Cmd
-		for i, tab := range a.tabs {
-			updated, cmd := tab.Update(msg)
-			a.tabs[i] = updated.(stepModel)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
-		return a, tea.Batch(cmds...)
-
+		return a, a.broadcastToAllTabs(msg)
 	case tea.MouseMsg:
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			// Tab bar occupies rows 0-2 (top border, content, bottom border).
-			if msg.Y <= 2 {
-				x := 0
-				for i, tab := range a.tabs {
-					label := tab.Title()
-					if tab.IsDone() {
-						label = "✓ " + label
-					}
-					var w int
-					if i == a.current {
-						w = lipgloss.Width(tabActive.Render(label))
-					} else {
-						w = lipgloss.Width(tabInactive.Render(label))
-					}
-					if msg.X >= x && msg.X < x+w {
-						if i != a.current {
-							a.current = i
-							return a, a.ensureInit(i)
-						}
-						return a, nil
-					}
-					x += w
+		return a.handleMouseMsg(msg)
+	case tea.KeyMsg:
+		return a.handleKeyMsg(msg)
+	}
+	// Non-input messages (async results, log lines, etc.) are forwarded to
+	// every tab so background tabs continue receiving their async results.
+	return a, a.broadcastToAllTabs(msg)
+}
+
+// broadcastToAllTabs forwards msg to every tab and collects all returned cmds.
+func (a *AppModel) broadcastToAllTabs(msg tea.Msg) tea.Cmd {
+	var cmds []tea.Cmd
+	for i, tab := range a.tabs {
+		updated, cmd := tab.Update(msg)
+		a.tabs[i] = updated.(stepModel)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
+// handleMouseMsg handles mouse events, routing tab-bar clicks with the
+// CanSwitchTabs() guard and forwarding other events to the active tab.
+func (a *AppModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && msg.Y <= 2 {
+		x := 0
+		for i, tab := range a.tabs {
+			label := tab.Title()
+			if tab.IsDone() {
+				label = "✓ " + label
+			}
+			var w int
+			if i == a.current {
+				w = lipgloss.Width(tabActive.Render(label))
+			} else {
+				w = lipgloss.Width(tabInactive.Render(label))
+			}
+			if msg.X >= x && msg.X < x+w {
+				if i != a.current && a.tabs[a.current].CanSwitchTabs() {
+					a.current = i
+					return a, a.ensureInit(i)
 				}
 				return a, nil
 			}
+			x += w
 		}
+		return a, nil
+	}
+	updated, cmd := a.tabs[a.current].Update(msg)
+	a.tabs[a.current] = updated.(stepModel)
+	return a, cmd
+}
 
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c":
-			if a.tabs[a.current].CanQuit() {
-				return a, tea.Quit
-			}
-		case "q":
-			if a.tabs[a.current].CanQuit() && a.tabs[a.current].CanSwitchTabs() {
-				return a, tea.Quit
-			}
-		case "left":
-			if a.tabs[a.current].CanSwitchTabs() && a.current > 0 {
-				a.current--
-				return a, a.ensureInit(a.current)
-			}
-		case "right":
-			if a.tabs[a.current].CanSwitchTabs() && a.current < len(a.tabs)-1 {
-				a.current++
-				return a, a.ensureInit(a.current)
-			}
+// handleKeyMsg handles keyboard input, applying CanQuit/CanSwitchTabs guards
+// before acting on global shortcuts and forwarding remaining keys to the active tab.
+func (a *AppModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		if a.tabs[a.current].CanQuit() {
+			return a, tea.Quit
+		}
+	case "q":
+		if a.tabs[a.current].CanQuit() && a.tabs[a.current].CanSwitchTabs() {
+			return a, tea.Quit
+		}
+	case "left":
+		if a.tabs[a.current].CanSwitchTabs() && a.current > 0 {
+			a.current--
+			return a, a.ensureInit(a.current)
+		}
+	case "right":
+		if a.tabs[a.current].CanSwitchTabs() && a.current < len(a.tabs)-1 {
+			a.current++
+			return a, a.ensureInit(a.current)
 		}
 	}
-
 	updated, cmd := a.tabs[a.current].Update(msg)
 	a.tabs[a.current] = updated.(stepModel)
 	return a, cmd
@@ -199,7 +214,7 @@ func (a *AppModel) View() string {
 		hints = append(hints, "←/→: switch tabs")
 	}
 	hints = append(hints, "q/Ctrl+C: quit")
-	sb.WriteString("\n" + tuistyles.StatusStyle.Render(fmt.Sprintf("%s", strings.Join(hints, "  "))) + "\n")
+	sb.WriteString("\n" + tuistyles.StatusStyle.Render(strings.Join(hints, "  ")) + "\n")
 
 	return sb.String()
 }

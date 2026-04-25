@@ -473,6 +473,64 @@ func TestCanSwitchTabs_FalseWhenPTYFocused(t *testing.T) {
 	}
 }
 
+func TestCanSwitchTabs_FalseWhenBusy(t *testing.T) {
+	m := NewToolsModel(system.Info{})
+	m.activeName = "git"
+	if m.CanSwitchTabs() {
+		t.Error("CanSwitchTabs() should be false while an op is active")
+	}
+}
+
+// ── CanQuit ───────────────────────────────────────────────────────────────────
+
+func TestCanQuit_TrueWhenIdle(t *testing.T) {
+	m := NewToolsModel(system.Info{})
+	if !m.CanQuit() {
+		t.Error("CanQuit() should be true when idle")
+	}
+}
+
+func TestCanQuit_FalseWhenPTYFocused(t *testing.T) {
+	m := NewToolsModel(system.Info{})
+	m.ptyFocused = true
+	if m.CanQuit() {
+		t.Error("CanQuit() should be false when PTY is focused")
+	}
+}
+
+func TestCanQuit_FalseWhenBusy(t *testing.T) {
+	m := NewToolsModel(system.Info{})
+	m.activeName = "git"
+	if m.CanQuit() {
+		t.Error("CanQuit() should be false while an op is active")
+	}
+}
+
+// ── installedDependentsOf transitive ─────────────────────────────────────────
+
+func TestInstalledDependentsOf_TransitiveClosure(t *testing.T) {
+	// Build a model with tools a -> b -> c (a requires b, b requires c).
+	tools := []registry.Tool{
+		{Name: "a", Description: "a", Requires: []string{"b"}},
+		{Name: "b", Description: "b", Requires: []string{"c"}},
+		{Name: "c", Description: "c"},
+	}
+	nameToIdx := map[string]int{"a": 0, "b": 1, "c": 2}
+	m := &ToolsModel{
+		tools:     tools,
+		nameToIdx: nameToIdx,
+		versions:  []string{"v1", "v1", "v1"}, // all installed
+	}
+	// Uninstalling c should include transitive dependent a first, then b.
+	deps := m.installedDependentsOf(2) // index of c
+	if len(deps) != 2 {
+		t.Fatalf("installedDependentsOf(c) = %v; want [a b]", deps)
+	}
+	if deps[0] != "a" || deps[1] != "b" {
+		t.Errorf("installedDependentsOf(c) = %v; want [a b]", deps)
+	}
+}
+
 // ── running phase ─────────────────────────────────────────────────────────────
 
 // runningModel returns a ToolsModel in active-op state with n synthetic ops in

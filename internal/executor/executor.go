@@ -10,9 +10,10 @@ import (
 	"regexp"
 	"strings"
 
+	"fmt"
+
 	"github.com/creack/pty"
 )
-
 
 // Result holds the combined output and error of a command execution.
 type Result struct {
@@ -107,9 +108,35 @@ func ExecuteWithContext(ctx context.Context, args []string, logCh chan<- string)
 // logCh, and any startup error.  The caller must close ptm after the error
 // channel delivers a value.  logCh is closed by this function after all output
 // has been forwarded; the caller must not close it.
+// emitPendingLines processes the pending buffer, emitting each complete line
+// via emit. It returns the remaining bytes that do not yet form a full line.
+func emitPendingLines(pending []byte, emit func(string)) []byte {
+	for {
+		idx := bytes.IndexAny(pending, "\r\n")
+		if idx < 0 {
+			break
+		}
+		emit(string(pending[:idx]))
+		next := idx + 1
+		if pending[idx] == '\r' && next < len(pending) && pending[next] == '\n' {
+			next++
+		}
+		pending = pending[next:]
+	}
+	return pending
+}
+
+// ExecuteWithPTY starts a command attached to a new pseudo-terminal so that
+// interactive programs (sudo, brew, etc.) can prompt for input naturally.
+// It returns the PTY master file (read for output, write for input), a channel
+// that receives the process exit error after all output has been forwarded to
+// logCh, and any startup error.  The caller must close ptm after the error
+// channel delivers a value.  logCh is closed by this function after all output
+// has been forwarded; the caller must not close it.
+// Returns an error immediately when args is empty.
 func ExecuteWithPTY(ctx context.Context, args []string, logCh chan<- string) (ptm *os.File, errCh <-chan error, err error) {
 	if len(args) == 0 {
-		return nil, nil, nil
+		return nil, nil, fmt.Errorf("ExecuteWithPTY: no command provided")
 	}
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec
 	ptm, err = pty.Start(cmd)
@@ -135,19 +162,7 @@ func ExecuteWithPTY(ctx context.Context, args []string, logCh chan<- string) (pt
 			n, readErr := ptm.Read(readBuf)
 			if n > 0 {
 				pending = append(pending, readBuf[:n]...)
-				// Emit complete lines terminated by \r\n, \r, or \n.
-				for {
-					idx := bytes.IndexAny(pending, "\r\n")
-					if idx < 0 {
-						break
-					}
-					emit(string(pending[:idx]))
-					next := idx + 1
-					if pending[idx] == '\r' && next < len(pending) && pending[next] == '\n' {
-						next++
-					}
-					pending = pending[next:]
-				}
+				pending = emitPendingLines(pending, emit)
 				// Emit partial content immediately (e.g. "Password: " prompts).
 				if len(pending) > 0 {
 					emit(string(pending))

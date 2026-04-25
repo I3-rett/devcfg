@@ -212,6 +212,8 @@ type ToolsModel struct {
 	height  int
 }
 
+// NewToolsModel creates and returns a new ToolsModel initialised with the
+// tool registry and system information used to resolve install commands.
 func NewToolsModel(sysInfo system.Info) *ToolsModel {
 	tools := registry.List()
 	nameToIdx := make(map[string]int, len(tools))
@@ -228,15 +230,20 @@ func NewToolsModel(sysInfo system.Info) *ToolsModel {
 	}
 }
 
+// Title returns the display name of the Tools tab.
 func (m *ToolsModel) Title() string { return "Tools" }
-func (m *ToolsModel) IsDone() bool  { return false }
 
-// CanQuit returns false while the PTY is focused so Ctrl+C is forwarded to
-// the running process rather than quitting the application.
-func (m *ToolsModel) CanQuit() bool { return !m.ptyFocused }
+// IsDone reports whether the Tools tab has completed all its work.
+func (m *ToolsModel) IsDone() bool { return false }
 
-// CanSwitchTabs returns false when a popup is open or the PTY is focused.
-func (m *ToolsModel) CanSwitchTabs() bool { return !m.popupMode && !m.ptyFocused }
+// CanQuit returns false while the PTY is focused or work is in progress so
+// Ctrl+C is forwarded to the running process and in-flight operations can be
+// cancelled/cleaned up predictably by the model.
+func (m *ToolsModel) CanQuit() bool { return !m.ptyFocused && !m.isBusy() }
+
+// CanSwitchTabs returns false when a popup is open, the PTY is focused,
+// or install/uninstall work is still active or queued.
+func (m *ToolsModel) CanSwitchTabs() bool { return !m.popupMode && !m.ptyFocused && !m.isBusy() }
 
 // Init detects currently installed tool versions asynchronously.
 func (m *ToolsModel) Init() tea.Cmd {
@@ -324,23 +331,38 @@ func (m *ToolsModel) collectInstallOrder(toolIdx int, visited map[int]bool) []pe
 	return ops
 }
 
-// installedDependentsOf returns the names of installed tools that depend on
-// the tool at toolIdx (used to warn before uninstalling).
+// installedDependentsOf returns the names of installed tools that transitively
+// depend on the tool at toolIdx, ordered so the most-dependent tools come first
+// (safe uninstall order: dependents before the tool they depend on).
 func (m *ToolsModel) installedDependentsOf(toolIdx int) []string {
-	var names []string
-	name := m.tools[toolIdx].Name
-	for i, t := range m.tools {
-		if !m.isInstalled(i) {
-			continue
+	target := m.tools[toolIdx].Name
+	visited := make(map[string]bool)
+	var order []string
+
+	var visit func(name string)
+	visit = func(name string) {
+		if visited[name] {
+			return
 		}
-		for _, req := range t.Requires {
-			if req == name {
-				names = append(names, t.Name)
-				break
+		visited[name] = true
+		// Find installed tools that directly depend on 'name' and recurse.
+		for i, t := range m.tools {
+			if !m.isInstalled(i) {
+				continue
+			}
+			for _, req := range t.Requires {
+				if req == name {
+					visit(t.Name)
+					break
+				}
 			}
 		}
+		if name != target {
+			order = append(order, name)
+		}
 	}
-	return names
+	visit(target)
+	return order
 }
 
 // ── queue & op management ────────────────────────────────────────────────────
@@ -482,6 +504,7 @@ func (m *ToolsModel) handleOpDone(name string, err error, isUninstall bool) tea.
 
 // ── Update ───────────────────────────────────────────────────────────────────
 
+// Update dispatches incoming Bubble Tea messages to the appropriate handler.
 func (m *ToolsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.popupMode {
 		return m.updatePopup(msg)
@@ -513,71 +536,74 @@ func (m *ToolsModel) updatePopup(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *ToolsModel) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-
 	case tea.MouseMsg:
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			// Toggle PTY focus based on which pane was clicked.
-			if m.activePty != nil {
-				leftBoundary := m.leftPaneBoundary()
-				if msg.X >= leftBoundary {
-					m.ptyFocused = true
-				} else {
-					m.ptyFocused = false
-				}
-			}
-		}
-		m.updateScroll(msg)
-
+		m.handleMouseInput(msg)
 	case tea.KeyMsg:
-		if m.ptyFocused && m.activePty != nil {
-			if b := keyToPTYBytes(msg); b != nil {
-				_, _ = m.activePty.Write(b)
-			}
-			// ESC unfocuses PTY so the user can navigate tabs again.
-			if msg.Type == tea.KeyEsc {
-				m.ptyFocused = false
-			}
-			return m, nil
-		}
-		return m, m.updateKey(msg.String())
-
+		return m, m.handleKeyInput(msg)
 	case toolDetectMsg:
-		n := len(m.tools)
-		if len(msg.versions) < n {
-			n = len(msg.versions)
-		}
-		for i := 0; i < n; i++ {
-			m.versions[i] = msg.versions[i]
-		}
-		m.loaded = true
-
+		m.handleToolDetect(msg)
 	case ptyStartedMsg:
 		m.activePty = msg.ptm
 		return m, tea.Batch(
 			waitForLog(msg.toolName, msg.logCh),
 			waitForDone(msg.toolName, msg.errCh, msg.isUninstall),
 		)
-
 	case ptyStartFailedMsg:
 		return m, m.handleOpDone(msg.toolName, msg.err, m.activeIsUninstall)
-
 	case logLineMsg:
 		return m, m.handleLogLine(msg)
-
 	case logDoneMsg:
 		// Channel closed; no re-subscription needed.
-
 	case installResultMsg:
 		return m, m.handleOpDone(msg.name, msg.err, false)
-
 	case uninstallResultMsg:
 		return m, m.handleOpDone(msg.name, msg.err, true)
 	}
 	return m, nil
+}
+
+// handleMouseInput toggles PTY focus based on which pane was clicked and
+// updates the scroll offset for wheel events.
+func (m *ToolsModel) handleMouseInput(msg tea.MouseMsg) {
+	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && m.activePty != nil {
+		if msg.X >= m.leftPaneBoundary() {
+			m.ptyFocused = true
+		} else {
+			m.ptyFocused = false
+		}
+	}
+	m.updateScroll(msg)
+}
+
+// handleKeyInput forwards keystrokes to the PTY when focused, or delegates to
+// the standard key handler otherwise.
+func (m *ToolsModel) handleKeyInput(msg tea.KeyMsg) tea.Cmd {
+	if m.ptyFocused && m.activePty != nil {
+		if b := keyToPTYBytes(msg); b != nil {
+			_, _ = m.activePty.Write(b)
+		}
+		// ESC unfocuses PTY so the user can navigate tabs again.
+		if msg.Type == tea.KeyEsc {
+			m.ptyFocused = false
+		}
+		return nil
+	}
+	return m.updateKey(msg.String())
+}
+
+// handleToolDetect stores the detected versions from a toolDetectMsg.
+func (m *ToolsModel) handleToolDetect(msg toolDetectMsg) {
+	n := len(m.tools)
+	if len(msg.versions) < n {
+		n = len(msg.versions)
+	}
+	for i := 0; i < n; i++ {
+		m.versions[i] = msg.versions[i]
+	}
+	m.loaded = true
 }
 
 func (m *ToolsModel) updateKey(key string) tea.Cmd {
@@ -672,26 +698,9 @@ func waitForDone(toolName string, errCh <-chan error, isUninstall bool) tea.Cmd 
 
 // ── PTY key forwarding ────────────────────────────────────────────────────────
 
-func keyToPTYBytes(msg tea.KeyMsg) []byte {
-	switch msg.Type {
-	case tea.KeyRunes:
-		return []byte(string(msg.Runes))
-	case tea.KeyEnter:
-		return []byte("\r")
-	case tea.KeyBackspace:
-		return []byte("\x7f")
-	case tea.KeyTab:
-		return []byte("\t")
-	case tea.KeySpace:
-		return []byte(" ")
-	case tea.KeyCtrlC:
-		return []byte("\x03")
-	case tea.KeyCtrlD:
-		return []byte("\x04")
-	case tea.KeyCtrlZ:
-		return []byte("\x1a")
-	case tea.KeyEsc:
-		return []byte("\x1b")
+// keyToEscSeq maps cursor/navigation keys to their VT100 escape sequences.
+func keyToEscSeq(t tea.KeyType) []byte {
+	switch t {
 	case tea.KeyUp:
 		return []byte("\x1b[A")
 	case tea.KeyDown:
@@ -714,8 +723,33 @@ func keyToPTYBytes(msg tea.KeyMsg) []byte {
 	return nil
 }
 
+func keyToPTYBytes(msg tea.KeyMsg) []byte {
+	switch msg.Type {
+	case tea.KeyRunes:
+		return []byte(string(msg.Runes))
+	case tea.KeyEnter:
+		return []byte("\r")
+	case tea.KeyBackspace:
+		return []byte("\x7f")
+	case tea.KeyTab:
+		return []byte("\t")
+	case tea.KeySpace:
+		return []byte(" ")
+	case tea.KeyCtrlC:
+		return []byte("\x03")
+	case tea.KeyCtrlD:
+		return []byte("\x04")
+	case tea.KeyCtrlZ:
+		return []byte("\x1a")
+	case tea.KeyEsc:
+		return []byte("\x1b")
+	}
+	return keyToEscSeq(msg.Type)
+}
+
 // ── View ──────────────────────────────────────────────────────────────────────
 
+// View renders the Tools tab content.
 func (m *ToolsModel) View() string {
 	if m.popupMode {
 		return m.viewPopup()
@@ -977,12 +1011,4 @@ func computePaneWidths(totalWidth int) (leftInner, rightInner int) {
 		rightInner = 10
 	}
 	return
-}
-
-// opActionLabel returns the human-readable label for an operation.
-func opActionLabel(isUninstall bool) string {
-	if isUninstall {
-		return "remove"
-	}
-	return "install"
 }

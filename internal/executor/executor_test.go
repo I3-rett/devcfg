@@ -109,9 +109,14 @@ func TestExecuteWithContext_CancellationTerminatesProcess(t *testing.T) {
 func TestExecuteWithPTY_PreservesANSISequences(t *testing.T) {
 	// Test that ANSI color codes are preserved in the log channel.
 	// We use printf to emit a red-colored string: \x1b[31mRED\x1b[0m
+	const testTimeout = 10 * time.Second
+
 	logCh := make(chan string, 16)
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+
 	ptm, errCh, err := ExecuteWithPTY(
-		context.Background(),
+		ctx,
 		[]string{"sh", "-c", "printf '\\033[31mRED\\033[0m\\n'"},
 		logCh,
 	)
@@ -120,13 +125,19 @@ func TestExecuteWithPTY_PreservesANSISequences(t *testing.T) {
 	}
 	defer func() { _ = ptm.Close() }()
 
-	// Wait for the command to finish
-	cmdErr := <-errCh
-	if cmdErr != nil {
-		t.Fatalf("command failed: %v", cmdErr)
+	// Wait for the command to finish, with a deadline so the test cannot hang.
+	select {
+	case cmdErr := <-errCh:
+		if cmdErr != nil {
+			t.Fatalf("command failed: %v", cmdErr)
+		}
+	case <-time.After(testTimeout):
+		cancel()
+		t.Fatal("timed out waiting for PTY command to complete")
 	}
 
-	// Collect all log lines
+	// logCh is closed by ExecuteWithPTY once the command exits, so this
+	// loop terminates promptly after the select above returns.
 	var lines []string
 	for line := range logCh {
 		lines = append(lines, line)

@@ -12,7 +12,7 @@ Workflow:
 1. Connect manually via SSH
 2. Download and run `devcfg`
 3. Follow the interactive TUI workflow
-4. Configure your environment (tools, git, docker, shell…)
+4. Configure your environment (tools, git, docker…)
 5. Everything runs locally on the remote machine
 
 ---
@@ -50,7 +50,7 @@ Interactive checklist of tools to install. Uses the system package manager (brew
 Available tools: `git`, `neovim`, `docker`, `nodejs`, `python3`, `curl`, `tmux`, `htop`, `ripgrep`, `fzf`, `zsh`, `starship`, `bat`
 
 ```
-Step 1/4 — Tools Installation
+Step 1/3 — Tools Installation
 
   [ ] git          Version control system
   [✓] neovim       Hyperextensible text editor
@@ -76,12 +76,6 @@ Automatic checks:
 - Docker daemon status (via `systemctl is-active docker`)
 - User membership in the `docker` group (offers `sudo usermod -aG docker $USER`)
 
-### Step 4 — Shell Setup
-- View current shell (`$SHELL`)
-- Option to switch to `zsh` or `bash` (via `chsh`)
-- Option to inject basic aliases into `~/.zshrc` / `~/.bashrc`:
-  `ll`, `la`, `gs`, `gp`, `gc`, `gco`, `..`, `...`
-
 ---
 
 ## 🏗️ Architecture
@@ -102,8 +96,7 @@ devcfg/
 │       └── steps/
 │           ├── tools.go            Step 1 — Tools checklist
 │           ├── git.go              Step 2 — Git config form
-│           ├── docker.go           Step 3 — Docker checks
-│           └── shell.go            Step 4 — Shell setup
+│           └── docker.go           Step 3 — Docker checks
 └── .github/workflows/release.yml  CI/CD: build + publish release
 ```
 
@@ -254,8 +247,7 @@ devcfg/
         └── steps/
             ├── tools.go           Step 1 — Tools checklist
             ├── git.go             Step 2 — Git config form
-            ├── docker.go          Step 3 — Docker checks
-            └── shell.go           Step 4 — Shell setup
+            └── docker.go          Step 3 — Docker checks
 ```
 
 ### Making changes

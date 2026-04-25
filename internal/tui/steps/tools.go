@@ -62,6 +62,24 @@ type ptyStartFailedMsg struct {
 const logChannelBufSize = 1024
 const logMaxLines = 500
 
+// UI layout constants for height calculations.
+const (
+	// appUIReservedRows is the number of rows AppModel reserves for tab bar and footer.
+	// Tab bar (1 line) + footer hints (2 lines) = 3 rows total.
+	appUIReservedRows = 3
+
+	// paneBorderRows is the number of rows consumed by pane borders (top + bottom).
+	paneBorderRows = 2
+
+	// paneTitleRows is the number of rows consumed by the pane title.
+	// Title text (1 line) + PaneTitleStyle.MarginBottom (1 line) + explicit "\n" (1 line) = 3 rows.
+	paneTitleRows = 3
+
+	// splitViewHintRows is the number of rows for hints below the split view.
+	// Hint text (1 line) + final newline (1 line) = 2 rows.
+	splitViewHintRows = 2
+)
+
 // ── helper types ─────────────────────────────────────────────────────────────
 
 // toolItem is one row in the tree-shaped display list.
@@ -1015,21 +1033,26 @@ func computePaneWidths(totalWidth int) (leftInner, rightInner int) {
 // computePaneHeight calculates the height for both panes in the split view.
 // This ensures both panes remain aligned regardless of content.
 func (m *ToolsModel) computePaneHeight() int {
-	// Account for: hint text (1-2 lines), final newline (1 line)
-	paneHeight := m.height - 3
-	if paneHeight < 10 {
-		paneHeight = 10
+	// The ToolsModel receives the full terminal height but must account for:
+	// 1. AppModel UI (tab bar + footer hints)
+	// 2. Split view hints below the panes
+	availableHeight := m.height - appUIReservedRows - splitViewHintRows
+	if availableHeight < 5 {
+		// Minimum viable height to avoid negative or zero values
+		availableHeight = 5
 	}
-	return paneHeight
+	return availableHeight
 }
 
 // computeVisibleLogLines calculates how many log lines can fit in the log pane.
-// Content height = pane height - 4 (2 for borders, 1 for title, 1 for title margin).
+// Content height = pane height - borders - title header.
 func (m *ToolsModel) computeVisibleLogLines() int {
 	paneHeight := m.computePaneHeight()
-	visibleLines := paneHeight - 4
-	if visibleLines < 5 {
-		visibleLines = 5
+	// Subtract space for borders and title (which includes MarginBottom and explicit "\n")
+	contentHeight := paneHeight - paneBorderRows - paneTitleRows
+	if contentHeight < 1 {
+		// Ensure at least 1 line is visible
+		contentHeight = 1
 	}
-	return visibleLines
+	return contentHeight
 }

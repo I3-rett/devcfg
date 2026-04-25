@@ -610,32 +610,24 @@ func TestToolsModel_Running_LogLine_Appended(t *testing.T) {
 
 // ── pane height calculations ─────────────────────────────────────────────────
 
-func TestComputePaneHeight_RespectsMinimum(t *testing.T) {
-	m := NewToolsModel(system.Info{})
-	m.height = 5 // very small terminal
-	got := m.computePaneHeight()
-	if got < 10 {
-		t.Errorf("computePaneHeight() = %d; want minimum 10", got)
-	}
-}
-
-func TestComputePaneHeight_SubtractsUIElements(t *testing.T) {
+func TestComputePaneHeight_AccountsForAppUI(t *testing.T) {
 	m := NewToolsModel(system.Info{})
 	m.height = 50
 	got := m.computePaneHeight()
-	// Should subtract 3 for hint text and final newline
-	want := 47
+	// Should subtract appUIReservedRows (3) and splitViewHintRows (2)
+	want := 45
 	if got != want {
-		t.Errorf("computePaneHeight() = %d; want %d", got, want)
+		t.Errorf("computePaneHeight() = %d; want %d (height - appUI - hints)", got, want)
 	}
 }
 
-func TestComputeVisibleLogLines_RespectsMinimum(t *testing.T) {
+func TestComputePaneHeight_ClampsToMinimum(t *testing.T) {
 	m := NewToolsModel(system.Info{})
-	m.height = 5 // very small terminal
-	got := m.computeVisibleLogLines()
+	m.height = 3 // very small terminal
+	got := m.computePaneHeight()
+	// Should clamp to minimum of 5 to avoid negative/zero values
 	if got < 5 {
-		t.Errorf("computeVisibleLogLines() = %d; want minimum 5", got)
+		t.Errorf("computePaneHeight() = %d; want minimum 5", got)
 	}
 }
 
@@ -643,10 +635,20 @@ func TestComputeVisibleLogLines_SubtractsBordersAndTitle(t *testing.T) {
 	m := NewToolsModel(system.Info{})
 	m.height = 50
 	got := m.computeVisibleLogLines()
-	// Pane height = 47 (50 - 3)
-	// Visible lines = 43 (47 - 4 for borders and title)
-	want := 43
+	// Pane height = 45 (50 - 3 - 2)
+	// Content = 40 (45 - 2 borders - 3 title rows)
+	want := 40
 	if got != want {
 		t.Errorf("computeVisibleLogLines() = %d; want %d", got, want)
+	}
+}
+
+func TestComputeVisibleLogLines_EnsuresMinimum(t *testing.T) {
+	m := NewToolsModel(system.Info{})
+	m.height = 5 // very small terminal
+	got := m.computeVisibleLogLines()
+	// Should ensure at least 1 line is visible
+	if got < 1 {
+		t.Errorf("computeVisibleLogLines() = %d; want at least 1", got)
 	}
 }

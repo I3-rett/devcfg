@@ -19,10 +19,42 @@ Workflow:
 
 ## 🚀 Quick Start
 
+### Recommended: One-line Install Script
+
+The installation script automatically downloads a pre-built binary if available, or builds from source if not:
+
 ```bash
-# Download the binary (replace with the correct asset for your platform)
-curl -L https://github.com/I3-rett/devcfg/releases/latest/download/devcfg-linux-amd64 -o devcfg
-chmod +x devcfg
+curl -fsSL https://raw.githubusercontent.com/I3-rett/devcfg/main/install.sh | bash
+```
+
+This will create a `devcfg` binary in your current directory. Then run:
+
+```bash
+./devcfg
+```
+
+### Option 1: Download Pre-built Binary (if available)
+
+```bash
+# Linux (amd64)
+curl -fsSL https://github.com/I3-rett/devcfg/releases/latest/download/devcfg-linux-amd64 -o devcfg \
+  && chmod +x devcfg && ./devcfg
+
+# macOS (Apple Silicon)
+curl -fsSL https://github.com/I3-rett/devcfg/releases/latest/download/devcfg-darwin-arm64 -o devcfg \
+  && chmod +x devcfg && ./devcfg
+```
+
+> **Note:** If you get a "Not Found" error, releases may not be published yet. Use the install script or Option 2 below.
+
+### Option 2: Build from Source
+
+**Requirements:** [Go 1.24+](https://go.dev/dl/)
+
+```bash
+git clone https://github.com/I3-rett/devcfg.git
+cd devcfg
+go build -o devcfg .
 ./devcfg
 ```
 
@@ -276,15 +308,19 @@ GitHub Actions workflow (`.github/workflows/release.yml`) triggers on `v*` tag p
 
 ## 🌍 Distribution
 
+Pre-built binaries are available in [GitHub Releases](https://github.com/I3-rett/devcfg/releases) once a version tag is pushed.
+
 ```bash
 # Linux (amd64)
-curl -L https://github.com/I3-rett/devcfg/releases/latest/download/devcfg-linux-amd64 -o devcfg \
+curl -fsSL https://github.com/I3-rett/devcfg/releases/latest/download/devcfg-linux-amd64 -o devcfg \
   && chmod +x devcfg && ./devcfg
 
 # macOS (Apple Silicon)
-curl -L https://github.com/I3-rett/devcfg/releases/latest/download/devcfg-darwin-arm64 -o devcfg \
+curl -fsSL https://github.com/I3-rett/devcfg/releases/latest/download/devcfg-darwin-arm64 -o devcfg \
   && chmod +x devcfg && ./devcfg
 ```
+
+> **Note:** If no releases have been published yet, build from source following the instructions in the Quick Start section.
 
 ---
 

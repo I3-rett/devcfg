@@ -21,17 +21,23 @@ Workflow:
 
 ### Recommended: One-line Install Script
 
-The installation script automatically downloads a pre-built binary if available, or builds from source if not:
+The installation script automatically downloads a pre-built binary if available, or builds from source if not. It installs the binary to `~/.local/bin` and updates your PATH:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/I3-rett/devcfg/main/install.sh | bash
 ```
 
-This will create a `devcfg` binary in your current directory. Then run:
+The script will:
+- Download or build the `devcfg` binary
+- Install it to `~/.local/bin` (creating the directory if needed)
+- Add `~/.local/bin` to your PATH in your shell configuration file (`.bashrc`, `.zshrc`, etc.)
+- Provide instructions for making `devcfg` immediately available
 
-```bash
-./devcfg
-```
+After installation, either:
+1. Open a new terminal, or
+2. Run `source ~/.bashrc` (or `~/.zshrc` for zsh)
+
+Then you can run `devcfg` from anywhere.
 
 ### Option 1: Download Pre-built Binary (if available)
 

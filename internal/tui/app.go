@@ -62,12 +62,13 @@ var (
 			BorderForeground(lipgloss.Color("#7C3AED"))
 )
 
-func newApp() *AppModel {
+func newApp(version string) *AppModel {
 	sys := system.Detect()
 	tabs := []stepModel{
 		steps.NewToolsModel(sys),
 		steps.NewGitModel(),
 		steps.NewDockerModel(),
+		steps.NewConfigModel(version),
 	}
 	return &AppModel{
 		tabs:        tabs,
@@ -219,8 +220,8 @@ func (a *AppModel) View() string {
 }
 
 // Run starts the TUI application.
-func Run() error {
-	app := newApp()
+func Run(version string) error {
+	app := newApp(version)
 	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err

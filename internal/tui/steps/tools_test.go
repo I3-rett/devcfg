@@ -614,10 +614,22 @@ func TestComputePaneHeight_AccountsForAppUI(t *testing.T) {
 	m := NewToolsModel(system.Info{})
 	m.height = 50
 	got := m.computePaneHeight()
-	// Should subtract appUIReservedRows (3) and splitViewHintRows (2)
+	// No PTY active, so only appUIReservedRows (5) is subtracted.
 	want := 45
 	if got != want {
-		t.Errorf("computePaneHeight() = %d; want %d (height - appUI - hints)", got, want)
+		t.Errorf("computePaneHeight() = %d; want %d (height - appUI)", got, want)
+	}
+}
+
+func TestComputePaneHeight_AccountsForHintWhenPTYActive(t *testing.T) {
+	m := NewToolsModel(system.Info{})
+	m.height = 50
+	m.ptyFocused = true
+	got := m.computePaneHeight()
+	// PTY focused → splitViewHintRows (1) also subtracted: 50 - 5 - 1 = 44.
+	want := 44
+	if got != want {
+		t.Errorf("computePaneHeight() with PTY = %d; want %d (height - appUI - hint)", got, want)
 	}
 }
 
@@ -635,8 +647,8 @@ func TestComputeVisibleLogLines_SubtractsBordersAndTitle(t *testing.T) {
 	m := NewToolsModel(system.Info{})
 	m.height = 50
 	got := m.computeVisibleLogLines()
-	// Pane height = 45 (50 - 3 - 2)
-	// Content = 40 (45 - 2 borders - 3 title rows)
+	// Pane height = 45 (50 - appUIReservedRows 5, no PTY so no hint rows)
+	// Content = 40 (45 - paneBorderRows 2 - paneTitleRows 3)
 	want := 40
 	if got != want {
 		t.Errorf("computeVisibleLogLines() = %d; want %d", got, want)

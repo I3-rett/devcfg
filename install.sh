@@ -66,8 +66,8 @@ download_binary() {
     echo "  $url"
 
     # Use -f to fail on HTTP errors (like 404)
-    if curl -fsSL "$url" -o "$BINARY_NAME"; then
-        chmod +x "$BINARY_NAME"
+    if curl -fsSL "$url" -o "/tmp/$BINARY_NAME"; then
+        chmod +x "/tmp/$BINARY_NAME"
         echo "✓ Successfully downloaded $BINARY_NAME"
         return 0
     else
@@ -99,18 +99,13 @@ build_from_source() {
 
     # Build the binary
     echo "Building binary..."
-    cd "$TEMP_DIR"
 
-    if go build -o "$BINARY_NAME" .; then
-        # Move binary to original directory
-        mv "$BINARY_NAME" "$OLDPWD/$BINARY_NAME"
-        cd "$OLDPWD"
+    if go build -C "$TEMP_DIR" -o "/tmp/$BINARY_NAME" .; then
         rm -rf "$TEMP_DIR"
-        chmod +x "$BINARY_NAME"
+        chmod +x "/tmp/$BINARY_NAME"
         echo "✓ Successfully built $BINARY_NAME"
         return 0
     else
-        cd "$OLDPWD"
         rm -rf "$TEMP_DIR"
         error_exit "Build failed. Check the output above for details."
     fi
@@ -132,7 +127,7 @@ install_globally() {
     fi
 
     # Move binary to install directory
-    mv "$BINARY_NAME" "$install_dir/$BINARY_NAME"
+    mv "/tmp/$BINARY_NAME" "$install_dir/$BINARY_NAME"
 
     echo "✓ Installed $BINARY_NAME to $install_dir"
 
@@ -211,9 +206,6 @@ install_globally() {
 main() {
     echo "=== devcfg installer ==="
     echo ""
-
-    # Work in /tmp to ensure write access regardless of the user's current directory
-    cd /tmp
 
     detect_platform
     echo ""

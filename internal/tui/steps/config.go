@@ -16,18 +16,20 @@ type ConfigModel struct {
 	version    string
 	binaryPath string
 	configDir  string
-	localBin   string
+	installDir string
 }
 
 // NewConfigModel creates a ConfigModel with the given build version.
 func NewConfigModel(version string) *ConfigModel {
 	m := &ConfigModel{version: version}
 
-	// Resolve binary path.
+	// Resolve binary path and derive the install directory from it.
 	if exe, err := os.Executable(); err == nil {
 		m.binaryPath = exe
+		m.installDir = filepath.Dir(exe)
 	} else {
 		m.binaryPath = "(unknown)"
+		m.installDir = "(unknown)"
 	}
 
 	// Config directory: $XDG_CONFIG_HOME/devcfg or ~/.config/devcfg.
@@ -37,13 +39,6 @@ func NewConfigModel(version string) *ConfigModel {
 		m.configDir = filepath.Join(home, ".config", "devcfg")
 	} else {
 		m.configDir = "(unknown)"
-	}
-
-	// Local bin directory where install.sh places the binary.
-	if home, err := os.UserHomeDir(); err == nil {
-		m.localBin = filepath.Join(home, ".local", "bin")
-	} else {
-		m.localBin = "(unknown)"
 	}
 
 	return m
@@ -93,7 +88,7 @@ func (m *ConfigModel) View() string {
 
 	sb.WriteString(tuistyles.DividerStyle.Render("─── Paths ───────────────────────────") + "\n")
 	sb.WriteString(row("Binary:", m.binaryPath) + "\n")
-	sb.WriteString(row("Install:", m.localBin) + "\n")
+	sb.WriteString(row("Install:", m.installDir) + "\n")
 	sb.WriteString(row("Config dir:", m.configDir) + "\n\n")
 
 	sb.WriteString(tuistyles.DividerStyle.Render("─── Overrides ───────────────────────") + "\n")

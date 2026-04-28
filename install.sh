@@ -13,6 +13,18 @@ set -e
 REPO="I3-rett/devcfg"
 BINARY_NAME="devcfg"
 
+# Print a clean error box and exit
+error_exit() {
+    local msg="$1"
+    echo ""
+    echo "┌─────────────────────────────────────────────┐"
+    echo "│  ✗ Installation failed                      │"
+    printf "│  %-45s│\n" "$msg"
+    echo "└─────────────────────────────────────────────┘"
+    echo ""
+    exit 1
+}
+
 # Detect OS and architecture
 detect_platform() {
     OS="$(uname -s)"
@@ -26,8 +38,7 @@ detect_platform() {
             OS_SUFFIX="darwin"
             ;;
         *)
-            echo "Error: Unsupported operating system: $OS"
-            exit 1
+            error_exit "OS '$OS' is not supported (linux/darwin only)"
             ;;
     esac
 
@@ -39,8 +50,7 @@ detect_platform() {
             ARCH_SUFFIX="arm64"
             ;;
         *)
-            echo "Error: Unsupported architecture: $ARCH"
-            exit 1
+            error_exit "Architecture '$ARCH' is not supported (x86_64/arm64 only)"
             ;;
     esac
 
@@ -71,8 +81,7 @@ build_from_source() {
 
     # Check if Go is installed
     if ! command -v go &> /dev/null; then
-        echo "Error: Go is not installed. Please install Go 1.24+ from https://go.dev/dl/"
-        exit 1
+        error_exit "Go is not installed. Get it at https://go.dev/dl/"
     fi
 
     # Check Go version
@@ -84,9 +93,8 @@ build_from_source() {
     echo "Cloning repository to $TEMP_DIR..."
 
     if ! git clone "https://github.com/${REPO}.git" "$TEMP_DIR" 2>/dev/null; then
-        echo "Error: Failed to clone repository. Please check your internet connection."
+        error_exit "Failed to clone repo. Check your internet connection."
         rm -rf "$TEMP_DIR"
-        exit 1
     fi
 
     # Build the binary
@@ -102,10 +110,9 @@ build_from_source() {
         echo "✓ Successfully built $BINARY_NAME"
         return 0
     else
-        echo "Error: Failed to build from source"
         cd "$OLDPWD"
         rm -rf "$TEMP_DIR"
-        exit 1
+        error_exit "Build failed. Check the output above for details."
     fi
 }
 

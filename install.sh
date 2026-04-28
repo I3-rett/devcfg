@@ -56,7 +56,7 @@ download_binary() {
     echo "  $url"
 
     # Use -f to fail on HTTP errors (like 404)
-    if curl -fsSL "$url" -o "$BINARY_NAME" 2>/dev/null; then
+    if curl -fsSL "$url" -o "$BINARY_NAME"; then
         chmod +x "$BINARY_NAME"
         echo "✓ Successfully downloaded $BINARY_NAME"
         return 0

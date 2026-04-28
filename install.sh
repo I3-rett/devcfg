@@ -61,13 +61,14 @@ detect_platform() {
 # Try to download pre-built binary
 download_binary() {
     local url="https://github.com/${REPO}/releases/latest/download/${BINARY_NAME}-${PLATFORM}"
+    local dest="$WORK_DIR/$BINARY_NAME"
 
     echo "Attempting to download pre-built binary from:"
     echo "  $url"
 
     # Use -f to fail on HTTP errors (like 404)
-    if curl -fsSL "$url" -o "$BINARY_NAME"; then
-        chmod +x "$BINARY_NAME"
+    if curl -fsSL "$url" -o "$dest"; then
+        chmod +x "$dest"
         echo "✓ Successfully downloaded $BINARY_NAME"
         return 0
     else
@@ -101,12 +102,10 @@ build_from_source() {
     echo "Building binary..."
     cd "$TEMP_DIR"
 
-    if go build -o "$BINARY_NAME" .; then
-        # Move binary to original directory
-        mv "$BINARY_NAME" "$OLDPWD/$BINARY_NAME"
+    if go build -o "$WORK_DIR/$BINARY_NAME" .; then
         cd "$OLDPWD"
         rm -rf "$TEMP_DIR"
-        chmod +x "$BINARY_NAME"
+        chmod +x "$WORK_DIR/$BINARY_NAME"
         echo "✓ Successfully built $BINARY_NAME"
         return 0
     else
@@ -119,6 +118,7 @@ build_from_source() {
 # Install binary to ~/.local/bin and update PATH
 install_globally() {
     local install_dir="$HOME/.local/bin"
+    local src="$WORK_DIR/$BINARY_NAME"
 
     echo "Installing to $install_dir..."
 
@@ -126,7 +126,7 @@ install_globally() {
     mkdir -p "$install_dir"
 
     # Move binary to install directory
-    mv "$BINARY_NAME" "$install_dir/$BINARY_NAME"
+    mv "$src" "$install_dir/$BINARY_NAME"
 
     echo "✓ Installed $BINARY_NAME to $install_dir"
 
@@ -205,6 +205,9 @@ install_globally() {
 main() {
     echo "=== devcfg installer ==="
     echo ""
+
+    WORK_DIR=$(mktemp -d)
+    trap 'rm -rf "$WORK_DIR"' EXIT
 
     detect_platform
     echo ""

@@ -65,8 +65,8 @@ const logMaxLines = 500
 // UI layout constants for height calculations.
 const (
 	// appUIReservedRows is the number of rows AppModel reserves for tab bar and footer.
-	// Tab bar (1 line) + footer hints (2 lines) = 3 rows total.
-	appUIReservedRows = 3
+	// Tab bar (3 lines: top border + labels + bottom/gap border) + footer (2 lines: blank separator + hint text) = 5 rows total.
+	appUIReservedRows = 5
 
 	// paneBorderRows is the number of rows consumed by pane borders (top + bottom).
 	paneBorderRows = 2
@@ -75,9 +75,9 @@ const (
 	// Title text (1 line) + PaneTitleStyle.MarginBottom (1 line) + explicit "\n" (1 line) = 3 rows.
 	paneTitleRows = 3
 
-	// splitViewHintRows is the number of rows for hints below the split view.
-	// Hint text (1 line) + final newline (1 line) = 2 rows.
-	splitViewHintRows = 2
+	// splitViewHintRows is the number of extra rows the split-view hint line adds when shown.
+	// The hint section ("\n" + hint text) contributes 1 extra newline compared to the no-hint case.
+	splitViewHintRows = 1
 )
 
 // ── helper types ─────────────────────────────────────────────────────────────
@@ -844,8 +844,8 @@ func (m *ToolsModel) viewSplit(logTool string) string {
 	// Calculate pane height to keep both panes aligned.
 	paneHeight := m.computePaneHeight()
 
-	leftPane := tuistyles.OpPaneBorderStyle.Width(leftInner).Height(paneHeight).Render(m.viewToolListPane())
-	rightPane := tuistyles.LogPaneBorderStyle.Width(rightInner).Height(paneHeight).Render(m.viewLogPane(logTool))
+	leftPane := tuistyles.OpPaneBorderStyle.Width(leftInner).Height(paneHeight - paneBorderRows).Render(m.viewToolListPane())
+	rightPane := tuistyles.LogPaneBorderStyle.Width(rightInner).Height(paneHeight - paneBorderRows).Render(m.viewLogPane(logTool))
 
 	result := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 
@@ -1032,11 +1032,16 @@ func computePaneWidths(totalWidth int) (leftInner, rightInner int) {
 
 // computePaneHeight calculates the height for both panes in the split view.
 // This ensures both panes remain aligned regardless of content.
+// The returned value is the desired total visual height of each pane (including borders).
 func (m *ToolsModel) computePaneHeight() int {
 	// The ToolsModel receives the full terminal height but must account for:
 	// 1. AppModel UI (tab bar + footer hints)
-	// 2. Split view hints below the panes
-	availableHeight := m.height - appUIReservedRows - splitViewHintRows
+	// 2. The split-view hint line, only when it will actually be rendered
+	reserved := appUIReservedRows
+	if m.ptyFocused || m.activePty != nil {
+		reserved += splitViewHintRows
+	}
+	availableHeight := m.height - reserved
 	if availableHeight < 5 {
 		// Minimum viable height to avoid negative or zero values
 		availableHeight = 5

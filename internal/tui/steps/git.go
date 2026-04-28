@@ -48,9 +48,10 @@ func (m *GitModel) IsDone() bool { return m.done }
 // CanQuit always returns true for the Git step.
 func (m *GitModel) CanQuit() bool { return true }
 
-// CanSwitchTabs always returns true — left/right cursor movement in text inputs
-// yields to tab navigation; fields are short enough that this is acceptable.
-func (m *GitModel) CanSwitchTabs() bool { return true }
+// CanSwitchTabs returns false when a text input is focused so that keystrokes
+// (including 'q') are forwarded to the input rather than handled as global
+// shortcuts.
+func (m *GitModel) CanSwitchTabs() bool { return m.focusIdx > 1 }
 
 type gitInitMsg struct {
 	name  string

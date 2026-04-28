@@ -125,6 +125,12 @@ install_globally() {
     # Create directory if it doesn't exist
     mkdir -p "$install_dir"
 
+    # Remove existing installation if present
+    if [ -f "$install_dir/$BINARY_NAME" ]; then
+        echo "Existing installation found. Updating..."
+        rm -f "$install_dir/$BINARY_NAME"
+    fi
+
     # Move binary to install directory
     mv "$BINARY_NAME" "$install_dir/$BINARY_NAME"
 
@@ -205,6 +211,9 @@ install_globally() {
 main() {
     echo "=== devcfg installer ==="
     echo ""
+
+    # Work in /tmp to ensure write access regardless of the user's current directory
+    cd /tmp
 
     detect_platform
     echo ""

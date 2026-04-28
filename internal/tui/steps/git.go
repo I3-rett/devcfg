@@ -48,10 +48,10 @@ func (m *GitModel) IsDone() bool { return m.done }
 // CanQuit always returns true for the Git step.
 func (m *GitModel) CanQuit() bool { return true }
 
-// CanSwitchTabs returns false when a text input is focused so that keystrokes
-// (including 'q') are forwarded to the input rather than handled as global
-// shortcuts.
-func (m *GitModel) CanSwitchTabs() bool { return m.focusIdx > 1 }
+// CanSwitchTabs returns false while the git form is active (not yet submitted)
+// so that keystrokes (including 'q' and arrow keys) are never intercepted as
+// global shortcuts while the user is filling in the form.
+func (m *GitModel) CanSwitchTabs() bool { return m.done }
 
 type gitInitMsg struct {
 	name  string

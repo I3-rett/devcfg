@@ -28,14 +28,14 @@ Workflow:
   - [Step 1 — Tools Installation](#step-1--tools-installation)
   - [Step 2 — Git Configuration](#step-2--git-configuration)
   - [Step 3 — Docker Setup](#step-3--docker-setup)
-- [🏗️ Architecture](#️-architecture)
+- [🏗️ Architecture](#-architecture)
   - [Layer Responsibilities](#layer-responsibilities)
-- [⚙️ Tool Model (tools.json)](#️-tool-model-toolsjson)
+- [⚙️ Tool Model (tools.json)](#-tool-model-toolsjson)
 - [🧠 Resolver Priority](#-resolver-priority)
 - [🎨 Customization](#-customization)
 - [📦 Build from Source](#-build-from-source)
 - [🧪 Testing](#-testing)
-- [🛠️ Dev Setup (Contributing)](#️-dev-setup-contributing)
+- [🛠️ Dev Setup (Contributing)](#-dev-setup-contributing)
 - [📦 CI/CD](#-cicd)
 - [🌍 Distribution](#-distribution)
 - [🧩 Philosophy](#-philosophy)
@@ -110,7 +110,7 @@ go build -o devcfg .
 ### Step 1 — Tools Installation
 Interactive checklist of tools to install. Uses the system package manager (brew/apt) or a fallback script.
 
-Available tools: `git`, `neovim`, `docker`, `nodejs`, `python3`, `curl`, `tmux`, `htop`, `ripgrep`, `fzf`, `zsh`, `starship`, `bat`, `tssh`, `lazygit`
+Available tools: `git`, `neovim`, `docker`, `lazydocker`, `nvm`, `python3`, `curl`, `tmux`, `htop`, `ripgrep`, `fzf`, `zsh`, `bat`, `tssh`, `lazygit`
 
 ```
 Step 1/3 — Tools Installation
@@ -118,7 +118,7 @@ Step 1/3 — Tools Installation
   [ ] git          Version control system
   [✓] neovim       Hyperextensible text editor
 ▶ [ ] docker       Container platform
-  [ ] nodejs       JavaScript runtime
+  [ ] nvm          Node Version Manager
   ...
 
 ╭──────────────╮
@@ -150,7 +150,7 @@ devcfg/
 │   ├── system/detect.go            OS + package manager detection
 │   ├── registry/
 │   │   ├── registry.go             Tool registry (go:embed)
-│   │   └── tools.json              Tool definitions (19 tools)
+│   │   └── tools.json              Tool definitions (18 tools)
 │   ├── resolver/resolver.go        brew / apt / fallback selection
 │   ├── executor/executor.go        Command runner (stdout+stderr capture)
 │   └── tui/

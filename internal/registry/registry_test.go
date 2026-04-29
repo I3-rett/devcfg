@@ -140,7 +140,7 @@ func TestBat_HasBinaryAliases(t *testing.T) {
 }
 
 func TestList_ContainsExpectedTools(t *testing.T) {
-	expected := []string{"brew", "git", "neovim", "docker", "lazydocker", "nvm", "python3", "curl", "tmux", "htop", "ripgrep", "fzf", "zsh", "bat", "font-roboto-mono-nerd-font", "nvchad"}
+	expected := []string{"brew", "git", "neovim", "docker", "lazydocker", "nvm", "python3", "curl", "tmux", "htop", "ripgrep", "fzf", "zsh", "bat", "tssh", "lazygit", "font-roboto-mono-nerd-font", "nvchad"}
 	index := make(map[string]bool, len(List()))
 	for _, tool := range List() {
 		index[tool.Name] = true

@@ -15,6 +15,31 @@ Workflow:
 4. Configure your environment (tools, git, docker…)
 5. Everything runs locally on the remote machine
 
+> **✨ Fully Customizable** — `devcfg` uses a simple JSON tool registry that you can modify to add your own tools, creating custom environment configurations for your team or organization. See [🎨 Customization](#-customization) for details.
+
+## 📑 Table of Contents
+
+- [🚀 Quick Start](#-quick-start)
+  - [Recommended: One-line Install Script](#recommended-one-line-install-script)
+  - [Option 1: Download Pre-built Binary (if available)](#option-1-download-pre-built-binary-if-available)
+  - [Option 2: Build from Source](#option-2-build-from-source)
+- [🎮 TUI Navigation](#-tui-navigation)
+- [🪜 Workflow Steps](#-workflow-steps)
+  - [Step 1 — Tools Installation](#step-1--tools-installation)
+  - [Step 2 — Git Configuration](#step-2--git-configuration)
+  - [Step 3 — Docker Setup](#step-3--docker-setup)
+- [🏗️ Architecture](#️-architecture)
+  - [Layer Responsibilities](#layer-responsibilities)
+- [⚙️ Tool Model (tools.json)](#️-tool-model-toolsjson)
+- [🧠 Resolver Priority](#-resolver-priority)
+- [🎨 Customization](#-customization)
+- [📦 Build from Source](#-build-from-source)
+- [🧪 Testing](#-testing)
+- [🛠️ Dev Setup (Contributing)](#️-dev-setup-contributing)
+- [📦 CI/CD](#-cicd)
+- [🌍 Distribution](#-distribution)
+- [🧩 Philosophy](#-philosophy)
+
 ---
 
 ## 🚀 Quick Start
@@ -85,7 +110,7 @@ go build -o devcfg .
 ### Step 1 — Tools Installation
 Interactive checklist of tools to install. Uses the system package manager (brew/apt) or a fallback script.
 
-Available tools: `git`, `neovim`, `docker`, `nodejs`, `python3`, `curl`, `tmux`, `htop`, `ripgrep`, `fzf`, `zsh`, `starship`, `bat`
+Available tools: `git`, `neovim`, `docker`, `nodejs`, `python3`, `curl`, `tmux`, `htop`, `ripgrep`, `fzf`, `zsh`, `starship`, `bat`, `tssh`, `lazygit`
 
 ```
 Step 1/3 — Tools Installation
@@ -125,7 +150,7 @@ devcfg/
 │   ├── system/detect.go            OS + package manager detection
 │   ├── registry/
 │   │   ├── registry.go             Tool registry (go:embed)
-│   │   └── tools.json              Tool definitions (13 tools)
+│   │   └── tools.json              Tool definitions (19 tools)
 │   ├── resolver/resolver.go        brew / apt / fallback selection
 │   ├── executor/executor.go        Command runner (stdout+stderr capture)
 │   └── tui/
@@ -174,6 +199,86 @@ apt available  + apt package defined   →  sudo apt-get install -y <pkg>
 fallback script defined                →  sh -c "<script>"
 otherwise                              →  error: no install method
 ```
+
+---
+
+## 🎨 Customization
+
+`devcfg` is designed to be **easily customizable** to fit your specific development environment needs. The tool registry is defined in a simple JSON file that you can modify to add, remove, or update tools.
+
+### Adding Custom Tools
+
+To add your own tools to the registry:
+
+1. **Edit the tool registry** — Modify `internal/registry/tools.json` to include your custom tool definitions
+2. **Define installation methods** — Specify how the tool should be installed on different systems:
+   - `brew`: Homebrew package name (for macOS and Linux with Homebrew)
+   - `apt`: APT package name (for Debian/Ubuntu systems)
+   - `fallback`: Shell script command for systems without package managers
+3. **Rebuild the binary** — Run `go build -o devcfg .` to embed the updated registry
+4. **Deploy** — Use your customized binary on your target machines
+
+### Tool Definition Format
+
+Each tool in `tools.json` follows this structure:
+
+```json
+{
+  "name": "tool-name",
+  "description": "Human-readable description",
+  "binary": "executable-name",
+  "brew": "homebrew-package-name",
+  "apt": "apt-package-name",
+  "fallback": "curl -fsSL https://example.com/install.sh | bash",
+  "requires": ["dependency-tool-1", "dependency-tool-2"]
+}
+```
+
+**Field Details:**
+- `name` — Unique identifier for the tool (required)
+- `description` — Shown in the TUI checklist (required)
+- `binary` — Executable name to check if installed (leave empty for non-binary tools like fonts or configs)
+- `binaryAliases` — Array of alternative binary names to check (e.g., `["bat", "batcat"]`)
+- `brew` — Homebrew formula/cask name
+- `apt` — APT package name
+- `fallback` — Shell command to install when package managers aren't available
+- `requires` — Array of tool names that must be installed first (optional)
+
+### Customization Examples
+
+**Add a custom development tool:**
+```json
+{
+  "name": "mycli",
+  "description": "My custom CLI tool",
+  "binary": "mycli",
+  "brew": "myorg/tap/mycli",
+  "apt": "",
+  "fallback": "curl -fsSL https://mycli.dev/install.sh | bash"
+}
+```
+
+**Add a tool with dependencies:**
+```json
+{
+  "name": "my-neovim-config",
+  "description": "My Neovim configuration",
+  "binary": "",
+  "brew": "",
+  "apt": "",
+  "fallback": "git clone https://github.com/me/my-nvim-config ~/.config/nvim",
+  "requires": ["neovim", "git"]
+}
+```
+
+### Why Customization Matters
+
+- **Team-specific tooling** — Create a company-wide `devcfg` with your organization's standard tools
+- **Role-specific environments** — Build different configurations for backend, frontend, DevOps, etc.
+- **Reproducible setups** — Ensure every team member has the same development environment
+- **Easy onboarding** — New team members can set up their machines with a single command
+
+The registry is embedded at build time using Go's `go:embed` directive, making your customized binary completely self-contained and portable.
 
 ---
 
@@ -290,7 +395,7 @@ devcfg/
 
 ### Making changes
 
-- **Add a new tool** — edit `internal/registry/tools.json` (rebuild required to embed the updated file).
+- **Add a new tool** — edit `internal/registry/tools.json` (rebuild required to embed the updated file). See [🎨 Customization](#-customization) for detailed instructions.
 - **Add a new TUI step** — create a new file under `internal/tui/steps/`, implement the `tea.Model` interface, and wire it up in `internal/tui/app.go`.
 - **Change styling** — update the Lipgloss theme in `internal/tui/tuistyles/styles.go`.
 

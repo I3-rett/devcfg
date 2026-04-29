@@ -13,6 +13,8 @@
   {"name":"fzf","description":"Fuzzy finder","binary":"fzf","brew":"fzf","apt":"fzf","fallback":""},
   {"name":"zsh","description":"Z shell","binary":"zsh","brew":"zsh","apt":"zsh","fallback":""},
   {"name":"bat","description":"A cat clone with syntax highlighting","binary":"bat","binaryAliases":["bat","batcat"],"brew":"bat","apt":"bat","fallback":"", "requires":["brew"]},
+  {"name":"tssh","description":"Modern SSH client with trzsz support","binary":"tssh","brew":"trzsz-ssh","apt":"","fallback":"ARCH=$(uname -m) && curl -fsSL \"https://github.com/trzsz/trzsz-ssh/releases/latest/download/tssh_linux_${ARCH}.tar.gz\" | tar -xz -C /tmp && sudo mv /tmp/tssh /usr/local/bin/"},
+  {"name":"lazygit","description":"Terminal UI for git commands","binary":"lazygit","brew":"lazygit","apt":"","fallback":"curl -fsSL https://github.com/jesseduffield/lazygit/releases/latest/download/lazygit_$(uname -s)_$(uname -m).tar.gz | tar -xz -C /tmp && sudo mv /tmp/lazygit /usr/local/bin/"},
   {"name":"font-roboto-mono-nerd-font","description":"Roboto Mono Nerd Font","binary":"","brew":"font-roboto-mono-nerd-font","apt":"","fallback":"","requires":["brew"]},
   {"name":"nvchad","description":"NvChad Neovim configuration","binary":"","brew":"","apt":"","fallback":"git clone https://github.com/NvChad/starter ~/.config/nvim --depth 1 && echo 'NvChad installed. Run nvim to complete setup.'","requires":["neovim","font-roboto-mono-nerd-font"]}
 ]
